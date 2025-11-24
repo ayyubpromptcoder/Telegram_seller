@@ -1,0 +1,5 @@
+# requirements.txt
+aiogram==3.10.0 
+asyncpg        # Asinxron PostgreSQL ulanishi uchun
+python-dotenv  # .env faylini o'qish uchun
+pandas         # Monospace jadval va pivot hisobot uchun
