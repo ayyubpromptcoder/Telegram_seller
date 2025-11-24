@@ -8,14 +8,14 @@ import asyncio
 import logging
 from aiohttp import web # Web server yaratish uchun
 from aiogram import Bot, Dispatcher, types
-# YANGI: DefaultBotProperties ni import qilish kerak
-from aiogram.client.default import DefaultBotProperties 
-from aiogram.types import Update
+from aiogram.client.default import DefaultBotProperties  # YANGI: Aiogram 3.x uchun
+from aiogram.types import Update, BotCommandScopeAllPrivateChats
 from config import BOT_TOKEN, WEB_SERVER_HOST, WEB_SERVER_PORT, WEBHOOK_URL, WEBHOOK_PATH, ADMIN_IDS
 import database
 from admin_handlers import admin_router
 from seller_handlers import seller_router
 
+# Log darajasini o'rnatish
 logging.basicConfig(level=logging.INFO)
 
 # ==============================================================================
@@ -74,11 +74,12 @@ async def on_startup(app: web.Application):
     await bot.set_webhook(WEBHOOK_URL)
     logging.info(f"Webhook o'rnatildi: {WEBHOOK_URL}")
     
-    # 3. Buyruqlar ro'yxatini Telegramga o'rnatish (Ixtiyoriy, lekin tavsiya etiladi)
+    # 3. Buyruqlar ro'yxatini Telegramga o'rnatish
     await bot.set_my_commands(
         [
             types.BotCommand(command="start", description="Tizimga kirish / Asosiy menu"),
-            types.BotCommand(command="admin_menu", description="Admin paneliga kirish"),
+            # types.BotCommand(command="admin_menu", description="Admin paneliga kirish"), # Agar mavjud bo'lsa yoqing
+            types.BotCommand(command="cancel", description="Amaliyotni bekor qilish"),
         ],
         scope=types.BotCommandScopeAllPrivateChats()
     )
@@ -86,6 +87,8 @@ async def on_startup(app: web.Application):
     # 4. Administratorga xabar berish
     for admin_id in ADMIN_IDS:
         try:
+            # ID raqam ekanligiga ishonch hosil qilish
+            admin_id = int(admin_id) 
             await bot.send_message(admin_id, "🚀 Bot Webhook rejimida ishga tushdi va Render.com da ulandi.")
         except Exception as e:
             logging.warning(f"Admin ID {admin_id} ga xabar yuborishda xato: {e}")
@@ -103,7 +106,10 @@ async def on_shutdown(app: web.Application):
 
 
 def main():
-    """Asosiy funksiya (aiohttp serverini ishga tushirish)."""
+    """
+    Asosiy funksiya. Render/Gunicorn ishlatilganda, faqat aiohttp ilovasini qaytaradi.
+    Bu, 'RuntimeError: Cannot run the event loop while another loop is running' xatosini oldini oladi.
+    """
     
     # aiohttp ilovasini yaratish
     app = web.Application()
@@ -115,12 +121,15 @@ def main():
     # Webhook manzilini belgilash (WEBHOOK_PATH = "/webhook/<token>")
     app.router.add_post(WEBHOOK_PATH, telegram_webhook_handler)
 
-    # Serverni boshlash
+    # Ilovani qaytarish
+    return app
+
+
+if __name__ == '__main__':
+    # Lokal test qilish uchun ishlatiladi (Renderda ishlamaydi)
+    app = main()
     web.run_app(
         app,
         host=WEB_SERVER_HOST,
         port=WEB_SERVER_PORT
     )
-
-if __name__ == '__main__':
-    main()
