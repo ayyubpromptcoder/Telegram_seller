@@ -6,6 +6,7 @@ from config import DATABASE_URL
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime
 import pandas as pd
+import sheets_api
 
 logging.basicConfig(level=logging.INFO)
 
@@ -286,20 +287,26 @@ async def calculate_agent_debt(agent_name: str) -> Tuple[float, float]:
     finally:
         await conn.close() if conn else None
 
-# --- V. Ma'lumot Kiritish Mantig'i (SQL versiyasi) ---
+# --- V. Ma'lumot Kiritish Mantig'i (SQL + Sheets Sinkronlash) ---
 
 async def add_stock_transaction(agent_name: str, product_name: str, qty_kg: float, issue_price: float) -> bool:
-    """Agentga tovar berish (yoki savdo qilish uchun o'tkazish) amaliyotini yozadi."""
+    """Agentga tovar berish amaliyotini yozadi va Sheetsga sinkronlaydi."""
     conn = await connect_db()
     if not conn: return False
     
     total_cost = qty_kg * issue_price
     
     try:
+        # 1. PostgreSQL ga yozish
         await conn.execute("""
             INSERT INTO stock (agent_name, product_name, quantity_kg, issue_price, total_cost)
             VALUES ($1, $2, $3, $4, $5);
         """, agent_name, product_name, qty_kg, issue_price, total_cost)
+        
+        # 2. Sheetsga yozish (ASOSIY SINKRONLASh)
+        # Eslatma: sheets_api ichidagi funksiyalar allaqachon async emas.
+        sheets_api.write_stock_txn_to_sheets(agent_name, product_name, qty_kg, issue_price, total_cost)
+        
         return True
     except Exception as e:
         logging.error(f"Stok tranzaksiyasini qo'shishda xato: {e}")
@@ -308,20 +315,24 @@ async def add_stock_transaction(agent_name: str, product_name: str, qty_kg: floa
         await conn.close() if conn else None
         
 async def add_debt_payment(agent_name: str, amount: float, comment: str, is_payment: bool = True) -> bool:
-    """Agent tomonidan pul to'lash (qarzni qoplash) yoki avans berish amaliyotini yozadi."""
+    """Agent tomonidan pul to'lash/avans berish amaliyotini yozadi va Sheetsga sinkronlaydi."""
     conn = await connect_db()
     if not conn: return False
 
-    # To'lov (payment) uchun manfiy qiymat, Avans uchun musbat qiymat
     final_amount = -amount if is_payment else amount
     txn_type = "Qoplash" if is_payment else "Avans"
     txn_date = datetime.now().strftime("%Y-%m-%d")
     
     try:
+        # 1. PostgreSQL ga yozish
         await conn.execute("""
             INSERT INTO debt (agent_name, transaction_type, amount, txn_date, comment)
             VALUES ($1, $2, $3, $4, $5);
         """, agent_name, txn_type, final_amount, txn_date, comment)
+        
+        # 2. Sheetsga yozish (ASOSIY SINKRONLASh)
+        sheets_api.write_debt_txn_to_sheets(agent_name, txn_type, final_amount, txn_date, comment)
+        
         return True
     except Exception as e:
         logging.error(f"Qarz to'lovini/Avansni qo'shishda xato: {e}")
@@ -330,7 +341,7 @@ async def add_debt_payment(agent_name: str, amount: float, comment: str, is_paym
         await conn.close() if conn else None
 
 async def add_sales_transaction(agent_name: str, product_name: str, qty_kg: float, sale_price: float) -> bool:
-    """Agentning savdo tranzaksiyasini yozadi (bu qarzga ta'sir qilmaydi, faqat hisobot uchun)."""
+    """Agentning savdo tranzaksiyasini yozadi va Sheetsga sinkronlaydi (oylik varaq)."""
     conn = await connect_db()
     if not conn: return False
 
@@ -340,10 +351,15 @@ async def add_sales_transaction(agent_name: str, product_name: str, qty_kg: floa
     sale_time = now.strftime("%H:%M:%S")
 
     try:
+        # 1. PostgreSQL ga yozish
         await conn.execute("""
             INSERT INTO sales (agent_name, product_name, qty_kg, sale_price, total_amount, sale_date, sale_time)
             VALUES ($1, $2, $3, $4, $5, $6, $7);
         """, agent_name, product_name, qty_kg, sale_price, total_amount, sale_date, sale_time)
+        
+        # 2. Sheetsga yozish (ASOSIY SINKRONLASh - Dinamik oylik varaqqa)
+        sheets_api.write_sale_to_sheets(agent_name, product_name, qty_kg, sale_price, total_amount, sale_date, sale_time)
+
         return True
     except Exception as e:
         logging.error(f"Savdo tranzaksiyasini qo'shishda xato: {e}")
