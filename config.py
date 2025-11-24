@@ -27,3 +27,11 @@ SHEET_NAMES = {
 
 # --- Umumiy Sozlamalar ---
 DEFAULT_UNIT = "kg"
+
+# Render avtomatik ravishda 'PORT' o'zgaruvchisini beradi
+WEB_SERVER_HOST = '0.0.0.0' # Tashqi ulanishlar uchun
+WEB_SERVER_PORT = int(os.getenv("PORT", 8080))
+
+# Domen nomini .env faylidan o'qiymiz (Render Web Service url manzili)
+WEBHOOK_PATH = f"/webhook/{BOT_TOKEN}"
+WEBHOOK_URL = os.getenv("WEBHOOK_URL") + WEBHOOK_PATH
