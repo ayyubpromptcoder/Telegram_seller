@@ -1,10 +1,8 @@
-# requirements.txt
 aiogram==3.10.0
 asyncpg
 python-dotenv
 pandas
 gspread==6.0.2
 google-auth
-aiohttp==3.9.5 # Webhook serveri uchun
+aiohttp==3.9.5
 gunicorn
-uvicorn
