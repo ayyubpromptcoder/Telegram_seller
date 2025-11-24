@@ -1,7 +1,8 @@
 # requirements.txt
-aiogram==3.10.0 
-asyncpg        # Asinxron PostgreSQL ulanishi uchun
-python-dotenv  # .env faylini o'qish uchun
-pandas         # Monospace jadval va pivot hisobot uchun
-gspread==6.0.2 # Google Sheets bilan ishlash uchun
-google-auth    # Sheets autentifikatsiyasi uchun
+aiogram==3.10.0
+asyncpg
+python-dotenv
+pandas
+gspread==6.0.2
+google-auth
+aiohttp==3.9.5 # Webhook serveri uchun
