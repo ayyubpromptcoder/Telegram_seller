@@ -6,3 +6,5 @@ pandas
 gspread==6.0.2
 google-auth
 aiohttp==3.9.5 # Webhook serveri uchun
+gunicorn
+uvicorn
