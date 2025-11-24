@@ -8,6 +8,8 @@ import asyncio
 import logging
 from aiohttp import web # Web server yaratish uchun
 from aiogram import Bot, Dispatcher, types
+# YANGI: DefaultBotProperties ni import qilish kerak
+from aiogram.client.default import DefaultBotProperties 
 from aiogram.types import Update
 from config import BOT_TOKEN, WEB_SERVER_HOST, WEB_SERVER_PORT, WEBHOOK_URL, WEBHOOK_PATH, ADMIN_IDS
 import database
@@ -20,7 +22,12 @@ logging.basicConfig(level=logging.INFO)
 # II. BOT, DISPATCHER VA HANDLERLARNI O'RNATISH
 # ==============================================================================
 
-bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
+# YANGI SINTAKSIS: DefaultBotProperties orqali parse_mode='HTML' ni o'rnatamiz
+default_properties = DefaultBotProperties(parse_mode="HTML")
+
+# Bot obyektini yangi sintaksisda yaratamiz
+bot = Bot(token=BOT_TOKEN, default=default_properties)
+
 dp = Dispatcher()
 
 # Routerlarni ulash
@@ -67,7 +74,16 @@ async def on_startup(app: web.Application):
     await bot.set_webhook(WEBHOOK_URL)
     logging.info(f"Webhook o'rnatildi: {WEBHOOK_URL}")
     
-    # 3. Administratorga xabar berish
+    # 3. Buyruqlar ro'yxatini Telegramga o'rnatish (Ixtiyoriy, lekin tavsiya etiladi)
+    await bot.set_my_commands(
+        [
+            types.BotCommand(command="start", description="Tizimga kirish / Asosiy menu"),
+            types.BotCommand(command="admin_menu", description="Admin paneliga kirish"),
+        ],
+        scope=types.BotCommandScopeAllPrivateChats()
+    )
+
+    # 4. Administratorga xabar berish
     for admin_id in ADMIN_IDS:
         try:
             await bot.send_message(admin_id, "🚀 Bot Webhook rejimida ishga tushdi va Render.com da ulandi.")
