@@ -1,5 +1,3 @@
-# seller_handlers.py
-
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import CommandStart, Command
@@ -25,35 +23,29 @@ class SellState(StatesGroup):
 # II. TIZIMGA KIRISH / ASOSIY MENU
 # ==============================================================================
 
-@seller_router.message(CommandStart())
-@seller_router.message(F.text == "🔝 Asosiy Menu")
+# Faqat ADMIN BO'LMAGAN foydalanuvchilar uchun ishlaydigan handler
+@seller_router.message(CommandStart(), ~F.from_user.id.in_(ADMIN_IDS))
+@seller_router.message(F.text == "🔝 Asosiy Menu", ~F.from_user.id.in_(ADMIN_IDS))
 async def cmd_start_seller(message: Message, state: FSMContext):
     """Botni ishga tushirish va agentga kirish menyusini ko'rsatish."""
     await state.clear()
     
+    # database.get_agent_by_password hozirda str(message.from_user.id) ni parol sifatida ishlatadi
     agent_name = (await database.get_agent_by_password(str(message.from_user.id)))
     
-    if message.from_user.id in ADMIN_IDS:
-        # Adminlar uchun alohida menu
-        await message.answer(
-            "Assalomu alaykum, **Admin!**\nSiz Admin menyusiga o'tishingiz mumkin.",
-            reply_markup=kb.admin_main_kb
-        )
-    elif agent_name:
+    # Eslatma: Adminlar bu yerga tashqi filtr (~F.from_user.id.in_(ADMIN_IDS)) tufayli kelmaydi
+    if agent_name:
         # Agentlar uchun asosiy menu
         await message.answer(
             f"Xush kelibsiz, **{agent_name['agent_name']}**! \nSizning MFY: **{agent_name['region_mfy']}**",
             reply_markup=kb.seller_main_kb
         )
     else:
-        # Ro'yxatdan o'tmagan foydalanuvchilar (Parol agent IDsi sifatida ishlatiladi)
+        # Ro'yxatdan o'tmagan foydalanuvchilar
         await message.answer(
             "Xush kelibsiz! Botdan foydalanish uchun sizga agent paroli kerak.\n"
             "Parolingizni kiriting. (Bu sizning Telegram ID'ingizga bog'lanadi)"
         )
-        # Parol bo'yicha kirish mantiqi (agent_handlersda yo'q, avtomatik ID tekshirish ishlaydi)
-        # Bizning loyihada ID paroldir. Shuning uchun parolsiz foydalanuvchilar yo'q.
-        # Bu qism faqat ID agent ro'yxatida bo'lmasa ishlaydi.
         pass
 
 # ==============================================================================
