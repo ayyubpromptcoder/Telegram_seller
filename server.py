@@ -2,92 +2,76 @@
 
 # ==============================================================================
 # I. KERAKLI KUTUBXONALARNI IMPORT QILISH
+# ... (O'zgarmaydi)
 # ==============================================================================
-
 import asyncio
 import logging
-from aiohttp import web # Web server yaratish uchun
+from aiohttp import web 
 from aiogram import Bot, Dispatcher, types
-from aiogram.client.default import DefaultBotProperties  # YANGI: Aiogram 3.x uchun
+from aiogram.client.default import DefaultBotProperties
 from aiogram.types import Update, BotCommandScopeAllPrivateChats
 from config import BOT_TOKEN, WEB_SERVER_HOST, WEB_SERVER_PORT, WEBHOOK_URL, WEBHOOK_PATH, ADMIN_IDS
 import database
 from admin_handlers import admin_router
 from seller_handlers import seller_router
 
-# Log darajasini o'rnatish
 logging.basicConfig(level=logging.INFO)
 
 # ==============================================================================
 # II. BOT, DISPATCHER VA HANDLERLARNI O'RNATISH
+# ... (O'zgarmaydi)
 # ==============================================================================
-
-# YANGI SINTAKSIS: DefaultBotProperties orqali parse_mode='HTML' ni o'rnatamiz
 default_properties = DefaultBotProperties(parse_mode="HTML")
-
-# Bot obyektini yangi sintaksisda yaratamiz
 bot = Bot(token=BOT_TOKEN, default=default_properties)
-
 dp = Dispatcher()
-
-# Routerlarni ulash
 dp.include_router(admin_router)
 dp.include_router(seller_router)
 
 
 # ==============================================================================
-# III. WEBHOOK HANDLER (HTTP SO'ROVGA ISHLOV BERISH)
+# III. WEBHOOK HANDLER (O'zgarmaydi)
 # ==============================================================================
-
 async def telegram_webhook_handler(request: web.Request):
-    """Telegramdan kelgan yangi yangilanish (update) so'rovlariga ishlov berish."""
-    # Agar so'rov bot tokeni bilan bir xil yo'l (path) bo'lmasa, rad etish
+    # ... (kod o'zgarmaydi)
     if request.match_info.get('token') != BOT_TOKEN:
         return web.Response(status=403)
         
     data = await request.json()
-    
-    # Telegram yangilanishini (update) Deserializatsiya qilish (JSON -> Update obyekt)
     update = Update.model_validate(data, context={"bot": bot})
-    
-    # Dispatcher orqali yangilanishni qayta ishlash
     await dp.feed_update(bot, update)
-    
-    # Telegramga muvaffaqiyatli qabul qilinganligi haqida xabar berish
     return web.Response(status=200)
 
 # ==============================================================================
 # IV. SERVERNI ISHGA TUSHIRISH FUNKSIYALARI
 # ==============================================================================
 
+# on_startup va on_shutdown funksiyalari avvalgi holatida qoladi
 async def on_startup(app: web.Application):
     """Server ishga tushganda (bir marta) bajariladigan funksiya."""
     logging.info("Server ishga tushirilmoqda...")
     
-    # 1. DB jadvallarini yaratish
+    # 1. DB jadvallarini yaratish (Async funksiya)
     db_ready = await database.create_tables()
     if not db_ready:
         logging.error("Ma'lumotlar bazasi tayyor emas. Ishlash to'xtatiladi.")
         raise RuntimeError("Database initialization failed.")
 
-    # 2. Webhook manzilini Telegramga o'rnatish
+    # 2. Webhook manzilini Telegramga o'rnatish (Async funksiya)
     await bot.set_webhook(WEBHOOK_URL)
     logging.info(f"Webhook o'rnatildi: {WEBHOOK_URL}")
     
-    # 3. Buyruqlar ro'yxatini Telegramga o'rnatish
+    # 3. Buyruqlar ro'yxatini Telegramga o'rnatish (Async funksiya)
     await bot.set_my_commands(
         [
             types.BotCommand(command="start", description="Tizimga kirish / Asosiy menu"),
-            # types.BotCommand(command="admin_menu", description="Admin paneliga kirish"), # Agar mavjud bo'lsa yoqing
             types.BotCommand(command="cancel", description="Amaliyotni bekor qilish"),
         ],
         scope=types.BotCommandScopeAllPrivateChats()
     )
 
-    # 4. Administratorga xabar berish
+    # 4. Administratorga xabar berish (Async funksiya)
     for admin_id in ADMIN_IDS:
         try:
-            # ID raqam ekanligiga ishonch hosil qilish
             admin_id = int(admin_id) 
             await bot.send_message(admin_id, "🚀 Bot Webhook rejimida ishga tushdi va Render.com da ulandi.")
         except Exception as e:
@@ -98,27 +82,28 @@ async def on_shutdown(app: web.Application):
     """Server to'xtaganda (bir marta) bajariladigan funksiya."""
     logging.warning('Server o\'chirilmoqda...')
     
-    # Webhookni o'chirib qo'yish
     await bot.delete_webhook()
-    
-    # Bot sessiyasini yopish
     await bot.session.close()
 
 
-def main():
+# ASOSIY TUZATISH: main funksiyasini async ga aylantirish
+async def main():
     """
-    Asosiy funksiya. Render/Gunicorn ishlatilganda, faqat aiohttp ilovasini qaytaradi.
-    Bu, 'RuntimeError: Cannot run the event loop while another loop is running' xatosini oldini oladi.
+    Asosiy funksiya. aiohttp.GunicornWebWorker talabiga ko'ra,
+    bu funksiya async bo'lishi va Application obyektini qaytarishi kerak.
     """
     
     # aiohttp ilovasini yaratish
     app = web.Application()
 
     # Serverni ishga tushirish/o'chirishda chaqiriladigan funksiyalarni ro'yxatdan o'tkazish
+    # Bu funksiyalar (on_startup, on_shutdown) app ichida chaqiriladi.
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
 
     # Webhook manzilini belgilash (WEBHOOK_PATH = "/webhook/<token>")
+    # Eslatma: request.match_info.get('token') ni ishlatish uchun pathda {token} bo'lishi kerak.
+    # Agar sizning WEBHOOK_PATH'ingiz /webhook/{BOT_TOKEN} kabi bo'lsa, bu to'g'ri ishlaydi.
     app.router.add_post(WEBHOOK_PATH, telegram_webhook_handler)
 
     # Ilovani qaytarish
@@ -127,7 +112,7 @@ def main():
 
 if __name__ == '__main__':
     # Lokal test qilish uchun ishlatiladi (Renderda ishlamaydi)
-    app = main()
+    app = asyncio.run(main())
     web.run_app(
         app,
         host=WEB_SERVER_HOST,
