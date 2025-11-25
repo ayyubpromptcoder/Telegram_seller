@@ -31,15 +31,11 @@ dp.include_router(seller_router)
 # ==============================================================================
 # III. WEBHOOK HANDLER (O'zgarmaydi)
 # ==============================================================================
-async def telegram_webhook_handler(request: web.Request):
-    # ... (kod o'zgarmaydi)
-    if request.match_info.get('token') != BOT_TOKEN:
-        return web.Response(status=403)
-        
-    data = await request.json()
-    update = Update.model_validate(data, context={"bot": bot})
-    await dp.feed_update(bot, update)
-    return web.Response(status=200)
+# config.py (Faraziy)
+BOT_TOKEN = "8526333002:AAHDBTJtS-CkkQubKJXFTV3NyylcZUg9hzc"
+# ...
+WEBHOOK_PATH = f"/webhook/{BOT_TOKEN}" 
+WEBHOOK_URL = f"https://telegram-seller.onrender.com{WEBHOOK_PATH}"
 
 # ==============================================================================
 # IV. SERVERNI ISHGA TUSHIRISH FUNKSIYALARI
