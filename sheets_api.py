@@ -56,6 +56,7 @@ def get_or_create_monthly_sheet(spreadsheet: gspread.Spreadsheet) -> gspread.Wor
         logging.info(f"Varaq topilmadi, {month_name} yaratilmoqda...")
         
         # Yangi varaqni yaratish va boshini yozish
+        # Eslatma: Bu yerda 1-indexga joylashtirish mantiqi yo'q, yangi varaq oxiriga qo'shiladi.
         worksheet = spreadsheet.add_worksheet(title=month_name, rows=1000, cols=15)
         
         # Sarlavhalar qatorini yozish
