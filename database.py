@@ -27,13 +27,14 @@ async def create_tables():
     if not conn: return False
 
     try:
-        # AGENTS jadvali (Agent_Name - asosiy kalit)
+        # AGENTS jadvali (telegram_id ustuni qo'shildi)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS agents (
                 agent_name VARCHAR(255) PRIMARY KEY,
                 region_mfy VARCHAR(100) NOT NULL,
                 phone VARCHAR(50),
-                password VARCHAR(50) NOT NULL
+                password VARCHAR(50) NOT NULL,
+                telegram_id BIGINT UNIQUE -- Agent IDsini bot eslab qoladi
             );
         """)
 
@@ -99,7 +100,7 @@ async def get_all_agents() -> List[Dict]:
     try:
         # MFY va Agent_Name bo'yicha tartiblash talabi bajariladi
         records = await conn.fetch("""
-            SELECT region_mfy, agent_name, phone, password
+            SELECT region_mfy, agent_name, phone, password, telegram_id
             FROM agents
             ORDER BY region_mfy ASC, agent_name ASC;
         """)
@@ -116,13 +117,30 @@ async def get_agent_by_password(password: str) -> Optional[Dict]:
     if not conn: return None
     try:
         record = await conn.fetchrow("""
-            SELECT region_mfy, agent_name, phone, password
+            SELECT region_mfy, agent_name, phone, password, telegram_id
             FROM agents
             WHERE password = $1;
         """, password)
         return dict(record) if record else None
     except Exception as e:
         logging.error(f"Parol orqali agentni olishda xato: {e}")
+        return None
+    finally:
+        await conn.close() if conn else None
+        
+async def get_agent_by_telegram_id(telegram_id: int) -> Optional[Dict]:
+    """Telegram ID orqali agentni topadi (YANGI FUNKSIYA)."""
+    conn = await connect_db()
+    if not conn: return None
+    try:
+        record = await conn.fetchrow("""
+            SELECT region_mfy, agent_name, phone, password, telegram_id
+            FROM agents
+            WHERE telegram_id = $1;
+        """, telegram_id)
+        return dict(record) if record else None
+    except Exception as e:
+        logging.error(f"Telegram ID orqali agentni olishda xato: {e}")
         return None
     finally:
         await conn.close() if conn else None
@@ -133,7 +151,7 @@ async def get_agent_info(agent_name: str) -> Optional[Dict]:
     if not conn: return None
     try:
         record = await conn.fetchrow("""
-            SELECT region_mfy, agent_name, phone, password
+            SELECT region_mfy, agent_name, phone, password, telegram_id
             FROM agents
             WHERE agent_name = $1;
         """, agent_name)
@@ -159,6 +177,24 @@ async def add_new_agent(region: str, name: str, phone: str, password: str) -> bo
         return False
     finally:
         await conn.close() if conn else None
+
+async def update_agent_telegram_id(agent_name: str, telegram_id: int) -> bool:
+    """Agent nomiga ko'ra uning Telegram ID'sini yangilaydi (Login vaqti) (YANGI FUNKSIYA)."""
+    conn = await connect_db()
+    if not conn: return False
+    try:
+        result = await conn.execute("""
+            UPDATE agents
+            SET telegram_id = $1
+            WHERE agent_name = $2;
+        """, telegram_id, agent_name)
+        return result == 'UPDATE 1'
+    except Exception as e:
+        logging.error(f"Agent Telegram ID'sini yangilashda xato: {e}")
+        return False
+    finally:
+        await conn.close() if conn else None
+
 
 # --- III. Mahsulot Mantig'i (SQL versiyasi) ---
 
@@ -233,21 +269,49 @@ async def update_product_price(product_name: str, new_price: float) -> bool:
 
 # --- IV. Hisob-kitob Mantig'i (SQL versiyasi) ---
 
-async def calculate_agent_stock(agent_name: str) -> float:
-    """Agentdagi jami mahsulot miqdorini (KG) hisoblaydi."""
+async def calculate_agent_stock(agent_name: str) -> List[Dict]:
+    """
+    Agentdagi har bir mahsulot bo'yicha qoldiq miqdorini (KG) hisoblaydi (Berilgan - Sotilgan).
+    (FUNKSIYA TO'LIQ ALMASHTIRILDI)
+    """
     conn = await connect_db()
-    if not conn: return 0.0
+    if not conn: return []
     try:
-        # STOCK jadvalidagi quantity_kg yig'indisi
-        total_stock = await conn.fetchval("""
-            SELECT COALESCE(SUM(quantity_kg), 0)
-            FROM stock
-            WHERE agent_name = $1;
+        # Mahsulotlarni Berish (STOCK) va Sotish (SALES) operatsiyalarini birlashtirish
+        records = await conn.fetch("""
+            WITH StockIn AS (
+                SELECT 
+                    product_name, 
+                    COALESCE(SUM(quantity_kg), 0) AS total_received
+                FROM stock
+                WHERE agent_name = $1
+                GROUP BY product_name
+            ),
+            SalesOut AS (
+                SELECT 
+                    product_name, 
+                    COALESCE(SUM(qty_kg), 0) AS total_sold
+                FROM sales
+                WHERE agent_name = $1
+                GROUP BY product_name
+            )
+            SELECT
+                p.name AS product_name,
+                COALESCE(si.total_received, 0) AS received_qty,
+                COALESCE(so.total_sold, 0) AS sold_qty,
+                COALESCE(si.total_received, 0) - COALESCE(so.total_sold, 0) AS balance_qty
+            FROM products p
+            LEFT JOIN StockIn si ON p.name = si.product_name
+            LEFT JOIN SalesOut so ON p.name = so.product_name
+            -- Agentga berilgan yoki sotilgan mahsulotlarni filtrlaymiz
+            WHERE COALESCE(si.total_received, 0) > 0 OR COALESCE(so.total_sold, 0) > 0;
         """, agent_name)
-        return float(total_stock)
+        
+        return [dict(r) for r in records]
+        
     except Exception as e:
         logging.error(f"Agent stogini hisoblashda xato: {e}")
-        return 0.0
+        return []
     finally:
         await conn.close() if conn else None
 
@@ -268,6 +332,7 @@ async def calculate_agent_debt(agent_name: str) -> Tuple[float, float]:
         current_debt += float(stock_cost)
         
         # 2. QARZDORLIK tranzaksiyalari (To'lovlar/Avanslar - Amount)
+        # Note: 'amount' manfiy (to'lov) yoki musbat (avans) bo'lishi mumkin.
         debt_amount = await conn.fetchval("""
             SELECT COALESCE(SUM(amount), 0)
             FROM debt
@@ -428,8 +493,8 @@ async def get_daily_sales_pivot_report() -> Optional[str]:
         # 8. Matnni Monospace formatida shakllantirish (Oldingi yechim kabi)
         
         col_widths = {
-            'MFY_Nomi': pivot_df['MFY_Nomi'].str.len().max() or 10,
-            'Agent_Ismi': pivot_df['Agent_Ismi'].str.len().max() or 15,
+            'MFY_Nomi': max(pivot_df['MFY_Nomi'].str.len().max() or 10, 8), # Kamida 8
+            'Agent_Ismi': max(pivot_df['Agent_Ismi'].str.len().max() or 15, 12), # Kamida 12
             'Jami_Savdo': 10 # Maksimal 10 belgi (misol: 1234.50 kg)
         }
         for col in date_cols:
@@ -468,7 +533,7 @@ async def get_daily_sales_pivot_report() -> Optional[str]:
                 
             report_lines.append(line)
 
-        # --- Jami Yig'indi Qatori (Total Sum) - (Yangi) ---
+        # --- Jami Yig'indi Qatori (Total Sum) ---
         total_sum = pivot_df['Jami_Savdo'].sum()
         
         # Yig'indi qatorini matn bilan chiqarish
