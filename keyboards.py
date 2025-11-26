@@ -7,7 +7,7 @@ cancel_btn = InlineKeyboardButton(text="❌ Bekor Qilish", callback_data="cancel
 
 
 # ==============================================================================
-# I. AGENT (SOTUVCHI) KLAVIATURASI
+# I. AGENT (SOTUVCHI) KLAVIATURASI (YANGILANDI)
 # ==============================================================================
 
 # Agent asosiy menusi (ReplyKeyboardMarkup)
@@ -16,6 +16,9 @@ seller_main_kb = ReplyKeyboardMarkup(
         [
             KeyboardButton(text="🛍️ Savdo Kiritish"),
             KeyboardButton(text="💰 Balans & Statistika")
+        ],
+        [
+            KeyboardButton(text="💰 To'lov Qabul Qilish") # YANGI: Agent to'lov qabul qilish uchun
         ],
         [
             KeyboardButton(text="🔝 Asosiy Menu") # Fayllarda boshqa menu kiritilmagani uchun /start buyrug'ini takrorlaydi
