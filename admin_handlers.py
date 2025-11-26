@@ -1,5 +1,3 @@
-# admin_handlers.py
-
 # ==============================================================================
 # I. KERAKLI KUTUBXONALARNI IMPORT QILISH
 # ==============================================================================
@@ -10,9 +8,19 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from config import ADMIN_IDS, DEFAULT_UNIT
 import database # Neon DB bilan ishlash uchun
+import logging # Loglarni ishlatish uchun (avtomatik filtr ishlashini kuzatish uchun foydali)
 
 # Admin routerini yaratish
 admin_router = Router()
+
+# ==============================================================================
+# TAVSIYA ETILGAN TUZATISH: GLOBAL FILTR O'RNATISH
+# Faqat ADMIN_IDS ro'yxatidagi foydalanuvchilarning xabarlarini o'tkazadi.
+# Admin bo'lmaganlarning xabarlari avtomatik ravishda keyingi routerga (seller_router) o'tadi.
+# ==============================================================================
+admin_router.message.filter(F.from_user.id.in_(ADMIN_IDS))
+admin_router.callback_query.filter(F.from_user.id.in_(ADMIN_IDS))
+
 
 # ==============================================================================
 # II. FSM HOLATLARI (Finite State Machine)
@@ -37,11 +45,8 @@ class AdminStates(StatesGroup):
 
 # ==============================================================================
 # III. YORDAMCHI FUNKSIYALAR
+# (is_admin funksiyasi olib tashlandi, chunki global filtr ishlatilmoqda)
 # ==============================================================================
-
-def is_admin(user_id: int) -> bool:
-    """Foydalanuvchi Admin_IDs ro'yxatida mavjudligini tekshiradi."""
-    return user_id in ADMIN_IDS
 
 def get_agent_management_buttons(agent_name: str) -> types.InlineKeyboardMarkup:
     """Agent ma'lumotlari menu buttonlarini yaratadi."""
@@ -53,6 +58,26 @@ def get_agent_management_buttons(agent_name: str) -> types.InlineKeyboardMarkup:
         ]
     )
 
+def get_mahsulot_keyboard() -> types.InlineKeyboardMarkup:
+    """Mahsulotlar bo'limi uchun klaviatura"""
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [types.InlineKeyboardButton(text="➕ Yangi Mahsulot Kiritish", callback_data="add_new_product")],
+            [types.InlineKeyboardButton(text="🛒 Mahsulotlar Ro'yxati", callback_data="list_products")]
+        ]
+    )
+
+def get_sotuvchi_keyboard() -> types.InlineKeyboardMarkup:
+    """Sotuvchilar bo'limi uchun klaviatura"""
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [types.InlineKeyboardButton(text="📦 Sotuvchilardagi Mahsulotlar", callback_data="agent_stock_summary")],
+            [types.InlineKeyboardButton(text="👥 Sotuvchilar", callback_data="list_all_agents_menu")],
+            [types.InlineKeyboardButton(text="➕ Yangi Sotuvchi Qo'shish", callback_data="add_new_agent_start")]
+        ]
+    )
+
+
 # ==============================================================================
 # IV. ADMIN ASOSIY BUYRUQLARI VA MENYULARI
 # ==============================================================================
@@ -60,11 +85,8 @@ def get_agent_management_buttons(agent_name: str) -> types.InlineKeyboardMarkup:
 @admin_router.message(Command("start"))
 @admin_router.message(Command("admin_menu"))
 async def handle_start(message: types.Message):
-    """Adminlar uchun start buyrug'i va asosiy menu."""
-    if not is_admin(message.from_user.id):
-        # Admin bo'lmagan foydalanuvchi seller_handlers.py ga yo'naltiriladi
-        return
-
+    """Adminlar uchun start buyrug'i va asosiy menu. (Ichki tekshiruv olib tashlandi)."""
+    
     # Admin asosiy menyu (Reply Keyboard)
     keyboard = types.ReplyKeyboardMarkup(
         keyboard=[
@@ -79,36 +101,20 @@ async def handle_start(message: types.Message):
 
 @admin_router.message(Command("mahsulot"))
 async def handle_mahsulot_menu(message: types.Message):
-    """'Mahsulot' buyrug'iga ishlov berish."""
-    if not is_admin(message.from_user.id): return
+    """'Mahsulot' buyrug'iga ishlov berish. (Ichki tekshiruv olib tashlandi)."""
     
-    keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[
-            [types.InlineKeyboardButton(text="➕ Yangi Mahsulot Kiritish", callback_data="add_new_product")],
-            [types.InlineKeyboardButton(text="🛒 Mahsulotlar Ro'yxati", callback_data="list_products")]
-        ]
-    )
-    await message.answer("Mahsulotlar bo'limi:", reply_markup=keyboard)
+    await message.answer("Mahsulotlar bo'limi:", reply_markup=get_mahsulot_keyboard())
 
 
 @admin_router.message(Command("sotuvchi"))
 async def handle_sotuvchi_menu(message: types.Message):
-    """'Sotuvchi' buyrug'iga ishlov berish."""
-    if not is_admin(message.from_user.id): return
+    """'Sotuvchi' buyrug'iga ishlov berish. (Ichki tekshiruv olib tashlandi)."""
     
-    keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[
-            [types.InlineKeyboardButton(text="📦 Sotuvchilardagi Mahsulotlar", callback_data="agent_stock_summary")],
-            [types.InlineKeyboardButton(text="👥 Sotuvchilar", callback_data="list_all_agents_menu")],
-            [types.InlineKeyboardButton(text="➕ Yangi Sotuvchi Qo'shish", callback_data="add_new_agent_start")]
-        ]
-    )
-    await message.answer("Sotuvchilar bo'limi:", reply_markup=keyboard)
+    await message.answer("Sotuvchilar bo'limi:", reply_markup=get_sotuvchi_keyboard())
 
 @admin_router.message(F.text == "📊 Kunlik Savdo Hisoboti")
 async def handle_daily_sales_report(message: types.Message):
-    """Kunlik savdo hisobotini bazadan olib, monospace formatda chiqaradi."""
-    if not is_admin(message.from_user.id): return
+    """Kunlik savdo hisobotini bazadan olib, monospace formatda chiqaradi. (Ichki tekshiruv olib tashlandi)."""
     
     await message.answer("Hisobot tayyorlanmoqda, iltimos kuting...")
     
@@ -150,7 +156,7 @@ async def process_product_price(message: types.Message, state: FSMContext):
             await message.answer(
                 f"✅ Mahsulot **{product_name}** ({price:,.0f} so'm) bazaga kiritildi.", 
                 parse_mode="Markdown", 
-                reply_markup=get_mahsulot_keyboard() # get_mahsulot_keyboard() ni funksiya sifatida yaratish kerak
+                reply_markup=get_mahsulot_keyboard()
             )
         else:
             await message.answer("❌ Mahsulotni bazaga kiritishda xato yuz berdi. (Nom takrorlangan bo'lishi mumkin)")
@@ -464,25 +470,3 @@ async def list_all_agent_stocks(callback: types.CallbackQuery):
         
     await callback.message.edit_text("Mahsulot qoldig'ini ko'rish uchun Agentni tanlang:", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
     await callback.answer()
-
-
-# Funksiyani to'liq ishlashi uchun kerakli bo'lgan alohida button funksiyalarini oxirida qo'shamiz
-
-def get_mahsulot_keyboard() -> types.InlineKeyboardMarkup:
-    """Mahsulotlar bo'limi uchun klaviatura"""
-    return types.InlineKeyboardMarkup(
-        inline_keyboard=[
-            [types.InlineKeyboardButton(text="➕ Yangi Mahsulot Kiritish", callback_data="add_new_product")],
-            [types.InlineKeyboardButton(text="🛒 Mahsulotlar Ro'yxati", callback_data="list_products")]
-        ]
-    )
-
-def get_sotuvchi_keyboard() -> types.InlineKeyboardMarkup:
-    """Sotuvchilar bo'limi uchun klaviatura"""
-    return types.InlineKeyboardMarkup(
-        inline_keyboard=[
-            [types.InlineKeyboardButton(text="📦 Sotuvchilardagi Mahsulotlar", callback_data="agent_stock_summary")],
-            [types.InlineKeyboardButton(text="👥 Sotuvchilar", callback_data="list_all_agents_menu")],
-            [types.InlineKeyboardButton(text="➕ Yangi Sotuvchi Qo'shish", callback_data="add_new_agent_start")]
-        ]
-    )
