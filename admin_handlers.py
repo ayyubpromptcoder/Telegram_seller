@@ -405,12 +405,57 @@ async def show_agent_password(callback: types.CallbackQuery):
     
 @admin_router.callback_query(F.data.startswith("agent_stock:"))
 async def show_agent_stock(callback: types.CallbackQuery):
-    """Agentdagi jami mahsulot miqdorini chiqaradi."""
+    """
+    Agentdagi har bir mahsulot qoldig'ini chiqaradi (yangi format, database.py funksiyasiga mos).
+    (FUNKSIYA ALMASHTIRILDI)
+    """
     agent_name = callback.data.split(":")[1]
-    stock_qty = await database.calculate_agent_stock(agent_name)
     
-    text = f"**{agent_name}**da jami **{stock_qty:,.1f} {DEFAULT_UNIT}** mahsulot mavjud."
-    await callback.answer(text, show_alert=True)
+    # database.py dan List[Dict] formatida stok ma'lumotlarini olish
+    stock_data = await database.calculate_agent_stock(agent_name)
+    
+    if not stock_data:
+        text = f"**{agent_name}**da hozirda **stok qoldig'i yo'q**."
+        await callback.answer(text, show_alert=True)
+        return
+
+    # Ma'lumotlarni formatlash
+    total_balance = sum(item['balance_qty'] for item in stock_data)
+    
+    report_lines = []
+    
+    # 1. Sarlavha
+    report_lines.append(f"📦 **{agent_name}** dagi mahsulot qoldig'i:")
+    report_lines.append(f"**Jami Qoldiq:** {total_balance:,.1f} {DEFAULT_UNIT}\n")
+    
+    # 2. Mahsulotlar ro'yxati (Monospace)
+    report_lines.append("```")
+    report_lines.append("MAHSULOT NOMI       | QOLDIQ (KG)")
+    report_lines.append("--------------------|------------")
+    
+    max_name_len = 18 # Monospace ko'rinishi uchun
+    
+    for item in stock_data:
+        name = item['product_name']
+        balance = item['balance_qty']
+        
+        # Agar qoldiq 0 dan kichik bo'lsa (ortiqcha sotuv), uni ham ko'rsatish kerak.
+        if abs(balance) < 0.1 and balance != 0: 
+            continue # Kichik xatolarni o'tkazib yuborish
+            
+        # Mahsulot nomi uzun bo'lsa qisqartirish (Monospacega sig'ish uchun)
+        display_name = name
+        if len(name) > max_name_len:
+             display_name = name[:max_name_len-3] + "..."
+             
+        report_lines.append(
+            f"{display_name.ljust(max_name_len)} | {balance:,.1f}".rjust(12)
+        )
+        
+    report_lines.append("```")
+    
+    await callback.answer("\n".join(report_lines), show_alert=True)
+
 
 @admin_router.callback_query(F.data.startswith("agent_debt:"))
 async def show_agent_debt(callback: types.CallbackQuery):
