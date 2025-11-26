@@ -11,6 +11,7 @@ import database
 import keyboards as kb
 from config import ADMIN_IDS, DEFAULT_UNIT
 import logging
+from aiogram.types import ReplyKeyboardRemove
 
 logging.basicConfig(level=logging.INFO)
 
@@ -61,7 +62,7 @@ async def cmd_start_seller(message: Message, state: FSMContext):
         await message.answer(
             "Xush kelibsiz! Botdan foydalanish uchun sizga **agent paroli** kerak.\n"
             "Parolingizni kiriting. (Bu sizning Telegram ID'ingizga bog'lanadi)",
-            reply_markup=kb.ReplyKeyboardRemove()
+            reply_markup=ReplyKeyboardRemove()
         )
         await state.set_state(LoginState.waiting_for_password)
 
@@ -89,6 +90,27 @@ async def process_login_password(message: Message, state: FSMContext):
             await message.answer("❌ Login muvaffaqiyatsiz. Bu parol allaqachon boshqa Telegram ID'ga bog'langan bo'lishi mumkin. Admindan so'rang.")
     else:
         await message.answer("❌ Noto'g'ri parol. Qayta urinib ko'ring yoki /start bosing.")
+
+# ==============================================================================
+# III. BALANS/STATISTIKANI KO'RISH (YANGILANGAN - Batafsil Stok)
+# ==============================================================================
+
+from aiogram import Router, F
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.filters import CommandStart, Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+import database
+import keyboards as kb
+from config import ADMIN_IDS, DEFAULT_UNIT
+import logging
+from aiogram.types import ReplyKeyboardRemove # <-- TO'G'RI IMPORT QILINGAN
+
+logging.basicConfig(level=logging.INFO)
+
+seller_router = Router()
+
+# ... (I va II bo'limlar o'zgarmadi, ular to'g'ri)
 
 # ==============================================================================
 # III. BALANS/STATISTIKANI KO'RISH (YANGILANGAN - Batafsil Stok)
@@ -132,7 +154,7 @@ async def show_seller_balance(message: Message):
     
     if stock_data:
         report_parts.append("```")
-        report_parts.append("MAHSULOT NOMI       | QOLDIQ (KG)")
+        report_parts.append("MAHSULOT NOMI       | QOLDIQ (KG)") # Eslatma: Tabulator o'rniga bo'shliqlar ishlatilgan
         report_parts.append("--------------------|------------")
         
         max_name_len = 18
@@ -146,11 +168,12 @@ async def show_seller_balance(message: Message):
                  display_name = name[:max_name_len-3] + "..."
                  
             # Agar qoldiq 0 ga yaqin bo'lsa (0.1 dan kichik) ko'rsatmaslik
+            # 0.1 dan kichik musbat va manfiy qoldiqlar yashiriladi (0 dan tashqari)
             if abs(balance) < 0.1 and balance != 0: 
                 continue 
                 
             report_parts.append(
-                f"{display_name.ljust(max_name_len)} | {balance:,.1f}".rjust(12)
+                f"{display_name.ljust(max_name_len)} | {balance:,.1f}" # .rjust(12) OLIB TASHLANDI - Telegramda noto'g'ri joylashuvga olib kelardi
             )
         
         report_parts.append("```")
