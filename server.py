@@ -1,4 +1,5 @@
 # server.py
+# Bu fayl botni webhook rejimida ishga tushirish uchun mo'ljallangan
 
 # ==============================================================================
 # I. KERAKLI KUTUBXONALARNI IMPORT QILISH
@@ -9,30 +10,29 @@ import logging
 from aiohttp import web 
 from aiogram import Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
-from aiogram.types import Update, BotCommandScopeAllPrivateChats
+from aiogram.types import Update, BotCommandScopeAllPrivateChats, BotCommandScopeChat
 
-# 'config.py', 'database.py', 'admin_handlers', 'seller_handlers' fayllaridan import qilinadi
+# Loyiha fayllaridan importlar
 from config import BOT_TOKEN, WEB_SERVER_HOST, WEB_SERVER_PORT, WEBHOOK_URL, WEBHOOK_PATH, ADMIN_IDS
 import database
 from admin_handlers import admin_router
 from seller_handlers import seller_router
 
 # Log darajasini o'rnatish
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # ==============================================================================
-# II. BOT, DISPATCHER VA HANDLERLARNI O'RNATISH
+# II. BOT, DISPATCHER VA ROUTERLARNI O'RNATISH
 # ==============================================================================
 
-# DefaultBotProperties orqali HTML parse_mode ni o'rnatamiz
-default_properties = DefaultBotProperties(parse_mode="HTML")
-
-# Bot obyektini yangi sintaksisda yaratamiz
+# Botni global parse_mode (Markdown yoki HTML) bilan yaratish
+# Biz HTML ni tanlaymiz, chunki MarkdownV2 bilan tez-tez muammolar bo'ladi
+default_properties = DefaultBotProperties(parse_mode="HTML") 
 bot = Bot(token=BOT_TOKEN, default=default_properties)
 
 dp = Dispatcher()
 
-# Routerlarni ulash
+# Routerlarni ulash: ADMIN routeri birinchi turishi kerak
 dp.include_router(admin_router)
 dp.include_router(seller_router)
 
@@ -43,74 +43,105 @@ dp.include_router(seller_router)
 
 async def telegram_webhook_handler(request: web.Request):
     """
-    Telegramdan kelgan yangi yangilanish (update) so'rovlariga ishlov berish.
-    URL manzilini tekshirishni WEBHOOK_PATH bilan solishtirish orqali amalga oshiradi 
-    (403 Forbidden xatosini tuzatish uchun).
+    Telegramdan kelgan yangilanish (update) so'rovlariga ishlov berish.
+    Webhook URL'ini tekshirish xavfsizlik uchun muhim.
     """
     
-    # Ruxsatsiz kirishning oldini olish uchun URL manzilini tekshirish
+    # Xavfsizlikni tekshirish: URL manzilini taqqoslash
     if request.path != WEBHOOK_PATH:
         logging.warning(f"Ruxsatsiz kirish urinishi: {request.path}")
-        return web.Response(status=403)
+        return web.Response(status=403) # Forbidden
         
     try:
-        # JSON ma'lumotlarini o'qish
         data = await request.json()
     except Exception as e:
         logging.error(f"JSON ma'lumotlarini o'qishda xato: {e}")
-        return web.Response(status=400) # Noto'g'ri formatdagi so'rov
+        return web.Response(status=400) 
 
-    # Telegram yangilanishini (update) Deserializatsiya qilish (JSON -> Update obyekt)
+    # Telegram yangilanishini Deserializatsiya qilish
     update = Update.model_validate(data, context={"bot": bot})
     
-    # Dispatcher orqali yangilanishni qayta ishlash
+    # Dispatcher orqali yangilanishni qayta ishlash (asinxron)
     await dp.feed_update(bot, update)
     
     # Telegramga muvaffaqiyatli qabul qilinganligi haqida xabar berish
     return web.Response(status=200)
 
 # ==============================================================================
-# IV. SERVERNI ISHGA TUSHIRISH FUNKSIYALARI
+# IV. SERVERNI ISHGA TUSHIRISH/O'CHIRISH FUNKSIYALARI
 # ==============================================================================
+
+async def setup_commands(bot: Bot):
+    """Bot buyruqlarini Telegramga o'rnatadi."""
+    
+    # Umumiy buyruqlar (Barcha shaxsiy chatlar uchun)
+    general_commands = [
+        types.BotCommand(command="start", description="Tizimga kirish / Asosiy menu"),
+        types.BotCommand(command="cancel", description="Amaliyotni bekor qilish"),
+    ]
+    await bot.set_my_commands(general_commands, scope=BotCommandScopeAllPrivateChats())
+    
+    # Admin uchun maxsus buyruqlar
+    if ADMIN_IDS:
+        admin_commands = [
+            types.BotCommand(command="start", description="Admin Boshqaruv Paneli"),
+            types.BotCommand(command="mahsulot", description="Mahsulotlar Bo'limi"),
+            types.BotCommand(command="sotuvchi", description="Sotuvchilar Bo'limi"),
+            types.BotCommand(command="cancel", description="Amaliyotni bekor qilish"),
+        ]
+        
+        # Har bir admin uchun buyruqlarni o'rnatish
+        for admin_id in ADMIN_IDS:
+            await bot.set_my_commands(
+                admin_commands,
+                scope=BotCommandScopeChat(chat_id=admin_id)
+            )
 
 async def on_startup(app: web.Application):
     """Server ishga tushganda (bir marta) bajariladigan funksiya."""
-    logging.info("Server ishga tushirilmoqda...")
+    logging.info("🚀 Server ishga tushirilmoqda...")
     
     # 1. DB jadvallarini yaratish/tekshirish
     db_ready = await database.create_tables()
     if not db_ready:
-        logging.error("Ma'lumotlar bazasi tayyor emas. Ishlash to'xtatiladi.")
+        logging.critical("❌ Ma'lumotlar bazasi tayyor emas. Ishlash to'xtatiladi.")
         raise RuntimeError("Database initialization failed.")
 
     # 2. Webhook manzilini Telegramga o'rnatish
     await bot.set_webhook(WEBHOOK_URL)
-    logging.info(f"Webhook o'rnatildi: {WEBHOOK_URL}")
+    logging.info(f"🔗 Webhook o'rnatildi: {WEBHOOK_URL}")
     
     # 3. Buyruqlar ro'yxatini Telegramga o'rnatish 
-    await bot.set_my_commands(
-        [
-            types.BotCommand(command="start", description="Tizimga kirish / Asosiy menu"),
-            types.BotCommand(command="cancel", description="Amaliyotni bekor qilish"),
-        ],
-        scope=types.BotCommandScopeAllPrivateChats()
-    )
+    await setup_commands(bot)
+    logging.info("⚙️ Buyruqlar ro'yxati yangilandi.")
 
-    # 4. Administratorga xabar berish (Agar admin /start bosmagan bo'lsa, Warning chiqadi)
+    # 4. Administratorga xabar berish
+    if ADMIN_IDS:
+        try:
+            # Faqat birinchi admin_id ga yuborish
+            await bot.send_message(ADMIN_IDS[0], "✅ Bot ishga tushdi va Webhook o'rnatildi.")
+        except Exception as e:
+            logging.warning(f"Adminlarga xabar yuborishda xato yuz berdi: {e}")
+
 
 async def on_shutdown(app: web.Application):
     """Server to'xtaganda (bir marta) bajariladigan funksiya."""
-    logging.warning('Server o\'chirilmoqda...')
-    # Webhookni o'chirib qo'yish va bot sessiyasini yopish
+    logging.warning('🛑 Server o\'chirilmoqda...')
+    # Webhookni o'chirib qo'yish
     await bot.delete_webhook()
+    # Bot sessiyasini yopish
     await bot.session.close()
+    logging.info("Bot sessiyasi yopildi va Webhook o'chirildi.")
 
 
-# ASOSIY FUNKSIYA: Gunicorn/aiohttp talabiga ko'ra async funksiya
-async def main():
+# ==============================================================================
+# V. ASOSIY ILOVA YARATUVCHISI
+# ==============================================================================
+
+async def create_app():
     """
-    Asosiy funksiya. Gunicorn (aiohttp.GunicornWebWorker) talabiga ko'ra,
-    bu funksiya async bo'lishi va Application obyektini qaytarishi kerak.
+    aiohttp Application obyektini yaratadi. 
+    Bu funksiya Gunicorn kabi WSGI/ASGI serverlar tomonidan chaqiriladi.
     """
     
     # aiohttp ilovasini yaratish
@@ -123,16 +154,18 @@ async def main():
     # Webhook manzilini belgilash
     app.router.add_post(WEBHOOK_PATH, telegram_webhook_handler)
 
-    # Ilovani qaytarish (Gunicorn chaqiradi)
+    # Ilovani qaytarish
     return app
 
 
 if __name__ == '__main__':
-    # Lokal test qilish uchun kerak. Render.com da bu qism ishlamaydi.
-    # Sinxron muhitda asinxron main() ni chaqirish
-    app = asyncio.run(main()) 
-    web.run_app(
-        app,
-        host=WEB_SERVER_HOST,
-        port=WEB_SERVER_PORT
-    )
+    # Lokal test qilish uchun muhit
+    try:
+        app = asyncio.run(create_app()) 
+        web.run_app(
+            app,
+            host=WEB_SERVER_HOST,
+            port=WEB_SERVER_PORT
+        )
+    except Exception as e:
+        logging.critical(f"Kritik xato: Bot ishga tushmadi. {e}")
