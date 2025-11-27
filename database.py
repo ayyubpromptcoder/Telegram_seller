@@ -1,27 +1,28 @@
-# database.py
+#database.py fayli
 
 import asyncpg
 import logging
 import pandas as pd
-import asyncio # Yangi import
-from functools import wraps # Yangi import
-from config import DATABASE_URL
-import sheets_api # Endi u sinxron funksiyalarni o'z ichiga oladi
+import asyncio 
+from functools import wraps 
+from config import DATABASE_URL # Ushbu fayl DATABASE_URL ni ta'minlashi kerak
+import sheets_api # Ushbu fayl Google Sheets bilan ishlash uchun sinxron funksiyalarni o'z ichiga oladi
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Global ulanish havzasi (Connection Pool)
+# Global PostgreSQL ulanish havzasi (Connection Pool)
 DB_POOL: Optional[asyncpg.Pool] = None
 
 # --- Yordamchi Funksiyalar va Dekorator ---
 
 async def init_db_pool() -> Optional[asyncpg.Pool]:
-    """Ulanishlar havzasini (Connection Pool) initsializatsiya qiladi."""
+    """Ulanishlar havzasini (Connection Pool) initsializatsiya qiladi. Global DB_POOL ni o'rnatadi."""
     global DB_POOL
     if DB_POOL is None:
         try:
+            # min_size va max_size ulanishlar sonini belgilaydi
             DB_POOL = await asyncpg.create_pool(DATABASE_URL, min_size=5, max_size=20)
             logging.info("PostgreSQL ulanish havzasi muvaffaqiyatli initsializatsiya qilindi.")
         except Exception as e:
@@ -31,24 +32,26 @@ async def init_db_pool() -> Optional[asyncpg.Pool]:
 
 def with_connection(func):
     """
-    Funksiyani asyncpg ulanish havzasi yordamida ulanishni olish va yakunlash uchun o'raydi (decorator).
-    Barcha DB funksiyalari endi bu dekoratordan foydalanadi.
+    Asinxron funksiyani asyncpg ulanish havzasidan ulanishni olish va yakunlash uchun o'raydi (decorator).
+    Barcha DB mantiqiy funksiyalari ushbu dekoratordan foydalanishi kerak.
     """
     @wraps(func)
     async def wrapper(*args, **kwargs):
         pool = await init_db_pool()
         if not pool:
             logging.error(f"DB ulanish havzasi mavjud emas. {func.__name__} bekor qilindi.")
-            # Natija turi (agar ulanish bo'lmasa) funksiya nomiga qarab qaytariladi
+            # Ulanish bo'lmasa, funksiya turiga mos keluvchi sukut qiymatni qaytarish
             if func.__name__.startswith(('add_', 'update_', 'create_')):
                 return False
             elif func.__name__.startswith('get_all'):
                 return []
             else:
+                # Agar funksiya tuple (masalan, qarz) yoki Dict/None qaytarsa
                 return None if 'optional' in func.__annotations__.get('return', '').lower() else (0.0, 0.0)
 
-        # Pool'dan ulanishni oling va uni funktsiyaga yuboring
+        # Pool'dan ulanishni oling va uni funktsiyaga birinchi argument sifatida yuboring (conn)
         async with pool.acquire() as conn:
+            # Dekoratsiyalangan funksiyani 'conn' bilan chaqirish
             return await func(conn, *args, **kwargs)
     return wrapper
 
@@ -61,7 +64,7 @@ async def create_tables() -> bool:
 
     async with pool.acquire() as conn:
         try:
-            # AGENTS jadvali
+            # AGENTS jadvali: Agent ma'lumotlari
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS agents (
                     agent_name VARCHAR(255) PRIMARY KEY,
@@ -72,7 +75,7 @@ async def create_tables() -> bool:
                 );
             """)
 
-            # PRODUCTS jadvali
+            # PRODUCTS jadvali: Sotuvga chiqariladigan mahsulotlar ro'yxati va standart narxi
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS products (
                     name VARCHAR(255) PRIMARY KEY,
@@ -80,39 +83,40 @@ async def create_tables() -> bool:
                 );
             """)
 
-            # SALES jadvali (Savdo tranzaksiyalari)
+            # SALES jadvali: Agent tomonidan amalga oshirilgan savdo tranzaksiyalari (Tashqi narx)
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS sales (
                     sale_id SERIAL PRIMARY KEY,
                     agent_name VARCHAR(255) REFERENCES agents(agent_name),
                     product_name VARCHAR(255) REFERENCES products(name),
                     qty_kg NUMERIC(10, 2) NOT NULL,
-                    sale_price NUMERIC(10, 2) NOT NULL,
+                    sale_price NUMERIC(10, 2) NOT NULL, -- Sotilgan narx
                     total_amount NUMERIC(15, 2) NOT NULL,
                     sale_date DATE NOT NULL,
                     sale_time TIME NOT NULL
                 );
             """)
             
-            # STOCK jadvali (Qarzni hisoblash uchun Issue_Price bo'yicha)
+            # STOCK jadvali: Agentga tovar berish (Ichki narx - Qarz hisobining boshlang'ich nuqtasi)
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS stock (
                     entry_id SERIAL PRIMARY KEY,
                     agent_name VARCHAR(255) REFERENCES agents(agent_name),
                     product_name VARCHAR(255) REFERENCES products(name),
                     quantity_kg NUMERIC(10, 2) NOT NULL,
-                    issue_price NUMERIC(10, 2) NOT NULL,
+                    issue_price NUMERIC(10, 2) NOT NULL, -- Chiqarish narxi (kompaniya uchun tannarx/bahosi)
                     total_cost NUMERIC(15, 2) NOT NULL
                 );
             """)
 
-            # DEBT jadvali (Pul to'lovlari)
+            # DEBT jadvali: Pul to'lovlari (Qoplash, Avans)
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS debt (
                     debt_id SERIAL PRIMARY KEY,
                     agent_name VARCHAR(255) REFERENCES agents(agent_name),
                     transaction_type VARCHAR(50) NOT NULL, -- 'Qoplash', 'Avans'
-                    amount NUMERIC(15, 2) NOT NULL, -- To'lov uchun manfiy, Avans uchun musbat
+                    amount NUMERIC(15, 2) NOT NULL, 
+                    -- Eslatma: 'Qoplash' uchun manfiy, 'Avans' uchun musbat (Agentning balansi oshadi, ya'ni bu yerda 'Avans' agentning naqd pul yechib olishi deb faraz qilingan).
                     txn_date DATE NOT NULL,
                     comment TEXT
                 );
@@ -278,9 +282,11 @@ async def update_product_price(conn, product_name: str, new_price: float) -> boo
 async def calculate_agent_stock(conn, agent_name: str) -> List[Dict]:
     """
     Agentdagi har bir mahsulot bo'yicha qoldiq miqdorini (KG) hisoblaydi (Berilgan - Sotilgan).
+    Faqat agentga berilgan yoki sotilgan mahsulotlarni ko'rsatadi.
     """
     try:
-        # Mahsulotlarni Berish (STOCK) va Sotish (SALES) operatsiyalarini birlashtirish
+        # StockIn: Agentga berilgan jami miqdor (quantity_kg)
+        # SalesOut: Agent sotgan jami miqdor (qty_kg)
         records = await conn.fetch("""
             WITH StockIn AS (
                 SELECT 
@@ -319,9 +325,12 @@ async def calculate_agent_stock(conn, agent_name: str) -> List[Dict]:
 
 @with_connection
 async def calculate_agent_debt(conn, agent_name: str) -> Tuple[float, float]:
-    """Agentning jami qarzdorligi (musbat) va haqdorligi (manfiy) ni hisoblaydi."""
+    """
+    Agentning jami qarzdorligi (musbat) va haqdorligi (manfiy) ni hisoblaydi.
+    Qarzdorlik = Sum(Stock Cost) + Sum(Debt Amounts)
+    """
     
-    current_debt = 0.0
+    current_debt = 0.0 # Agentning kompaniyaga jami qarzi (musbat bo'lsa qarz, manfiy bo'lsa kompaniya qarz)
     
     try:
         # 1. STOK qiymati (Agentning boshlang'ich qarzi - total_cost)
@@ -342,8 +351,10 @@ async def calculate_agent_debt(conn, agent_name: str) -> Tuple[float, float]:
 
         # Natijani ajratish:
         if current_debt >= 0:
+            # Agar umumiy summa musbat yoki nol bo'lsa, bu Agentning qarzi
             return current_debt, 0.0 # Qarzdorlik (Agent qarz), Haqdorlik (0)
         else:
+            # Agar umumiy summa manfiy bo'lsa, bu Kompaniyaning Agentga bo'lgan qarzi
             return 0.0, abs(current_debt) # Qarzdorlik (0), Haqdorlik (Kompaniya qarz)
             
     except Exception as e:
@@ -359,13 +370,14 @@ async def add_stock_transaction(conn, agent_name: str, product_name: str, qty_kg
     total_cost = qty_kg * issue_price
     
     try:
-        # 1. PostgreSQL ga yozish
+        # 1. PostgreSQL ga yozish (Atomik operatsiya)
         await conn.execute("""
             INSERT INTO stock (agent_name, product_name, quantity_kg, issue_price, total_cost)
             VALUES ($1, $2, $3, $4, $5);
         """, agent_name, product_name, qty_kg, issue_price, total_cost)
         
-        # 2. Sheetsga yozish (ASOSIY SINKRONLASh - Asinxron muhitni bloklamaslik uchun to_thread() ishlatiladi)
+        # 2. Sheetsga yozish (ASOSIY SINKRONLASh)
+        # Sinxron Sheets API chaqiruvini asinxron muhitni bloklamaslik uchun to_thread() yordamida ajratish
         await asyncio.to_thread(sheets_api.write_stock_txn_to_sheets, agent_name, product_name, qty_kg, issue_price, total_cost)
         
         return True
@@ -377,7 +389,8 @@ async def add_stock_transaction(conn, agent_name: str, product_name: str, qty_kg
 async def add_debt_payment(conn, agent_name: str, amount: float, comment: str, is_payment: bool = True) -> bool:
     """Agent tomonidan pul to'lash/avans berish amaliyotini yozadi va Sheetsga sinkronlaydi."""
 
-    final_amount = -amount if is_payment else amount
+    # Agar bu Qoplash (Payment) bo'lsa, summa manfiy qilinadi (qarzdorlikni kamaytiradi)
+    final_amount = -amount if is_payment else amount 
     txn_type = "Qoplash" if is_payment else "Avans"
     txn_date = datetime.now().strftime("%Y-%m-%d")
     
@@ -425,7 +438,8 @@ async def add_sales_transaction(conn, agent_name: str, product_name: str, qty_kg
 @with_connection
 async def get_daily_sales_pivot_report(conn) -> Optional[str]:
     """
-    Kunlik savdo ma'lumotlarini bazadan oladi va monospace formatda chiqaradi.
+    Kunlik savdo ma'lumotlarini bazadan oladi, Pandas yordamida pivot qiladi va Telegram uchun qulay monospace formatda chiqaradi.
+    Faqat oxirgi 7 kunlik ma'lumotni ko'rsatadi.
     """
     try:
         # 1. Barcha sotuv va agent ma'lumotlarini olish
@@ -445,12 +459,13 @@ async def get_daily_sales_pivot_report(conn) -> Optional[str]:
         # 2. Pandas DataFrame yaratish
         df = pd.DataFrame([dict(r) for r in records])
 
-        # 3. Ustunlarni tayyorlash
+        # 3. Ustunlarni tayyorlash va ma'lumot turlarini sozlash
         df.rename(columns={'region_mfy': 'MFY_Nomi', 'agent_name': 'Agent_Ismi', 'qty_kg': 'Qty_KG'}, inplace=True)
         df['Qty_KG'] = pd.to_numeric(df['Qty_KG'], errors='coerce').fillna(0)
+        # Sanani oy-kun formatiga o'tkazish
         df['sale_date'] = pd.to_datetime(df['sale_date'], errors='coerce').dt.strftime('%m-%d')
         
-        # 4. Pivot jadvalni yaratish (Sana ustun)
+        # 4. Pivot jadvalni yaratish: Index (Agentlar), Columns (Sanalar)
         pivot_df = pd.pivot_table(
             df, 
             values='Qty_KG', 
@@ -466,34 +481,32 @@ async def get_daily_sales_pivot_report(conn) -> Optional[str]:
         # 6. Tartiblash (MFY keyin Agent nomi bo'yicha)
         pivot_df = pivot_df.sort_values(by=['MFY_Nomi', 'Agent_Ismi'], ascending=[True, True])
         
-        # 7. Ustunlarni tartibga keltirish
-        date_cols = [col for col in pivot_df.columns if col not in ['MFY_Nomi', 'Agent_Ismi', 'Jami_Savdo']]
-        date_cols.sort()
-        
-        # Faqat so'nggi 7 kunlik ma'lumotni olish uchun
-        date_cols = date_cols[-7:] 
-        
-        final_cols = ['Jami_Savdo'] + date_cols
+        # 7. Ustunlarni tartibga keltirish (oxirgi 7 kun + Jami)
+        date_cols = [col for col in pivot_df.columns if col not in ['Jami_Savdo']]
+        date_cols.sort(reverse=True) # Sanalarni eng yangidan eng eskisiga qarab tartiblaymiz
+        date_cols = date_cols[:7] # Faqat so'nggi 7 kunlik ma'lumotni olish
+        date_cols.sort() # Keyin ularni eski sanadan yangi sanaga qarab tartiblaymiz
+
         pivot_df = pivot_df.reset_index()
 
         # 8. Matnni Monospace formatida shakllantirish
         
-        # Ustun kengliklarini hisoblash
+        # Ustun kengliklarini hisoblash (matnni bir tekisda chiqarish uchun)
         col_widths = {
             'MFY_Nomi': max(pivot_df['MFY_Nomi'].astype(str).str.len().max() or 8, 8),
             'Agent_Ismi': max(pivot_df['Agent_Ismi'].astype(str).str.len().max() or 12, 12),
-            'Jami_Savdo': 10 # 1234.5 kg
+            'Jami_Savdo': 10 # 1234.5 kg format uchun
         }
         for col in date_cols:
-            col_widths[col] = 7 # 01-01 format + .1f
-
+            col_widths[col] = 7 # Sanalar uchun (01-01)
+        
         report_lines = []
         
         # --- Sarlavha (Head) ---
         header_line = ""
         header_line += "MFY NOMI".ljust(col_widths['MFY_Nomi']) + " | "
         header_line += "AGENT ISMI".ljust(col_widths['Agent_Ismi']) + " | "
-        header_line += "JAMI SAVDO".rjust(col_widths['Jami_Savdo'])
+        header_line += "JAMI_KG".rjust(col_widths['Jami_Savdo'])
         
         for col in date_cols:
             header_line += " | " + col.center(col_widths[col])
@@ -510,12 +523,13 @@ async def get_daily_sales_pivot_report(conn) -> Optional[str]:
             line += str(row['MFY_Nomi']).ljust(col_widths['MFY_Nomi']) + " | "
             line += str(row['Agent_Ismi']).ljust(col_widths['Agent_Ismi']) + " | "
             
-            # Raqamni formatlashda 1 o'nli kasr kerak
-            jami_savdo_kg = f"{row['Jami_Savdo']:.1f} kg"
+            # Raqamni formatlash (1 o'nli kasr)
+            jami_savdo_kg = f"{row['Jami_Savdo']:.1f}"
             line += jami_savdo_kg.rjust(col_widths['Jami_Savdo']) 
             
             for col in date_cols:
-                qty_val = f"{row[col]:.1f}"
+                # Pivot jadvalda mavjud bo'lmagan ustunlar 0 bo'ladi
+                qty_val = f"{row.get(col, 0.0):.1f}"
                 line += " | " + qty_val.rjust(col_widths[col])
                 
             report_lines.append(line)
@@ -523,22 +537,22 @@ async def get_daily_sales_pivot_report(conn) -> Optional[str]:
         # --- Jami Yig'indi Qatori (Total Sum) ---
         total_sum = pivot_df['Jami_Savdo'].sum()
         
-        # Yig'indi qatorini matn bilan chiqarish
         total_line = ""
         total_line += "Yig'indi".ljust(col_widths['MFY_Nomi']) + " | "
         total_line += "JAMI".ljust(col_widths['Agent_Ismi']) + " | "
-        total_line += f"{total_sum:.1f} kg".rjust(col_widths['Jami_Savdo'])
+        total_line += f"{total_sum:.1f}".rjust(col_widths['Jami_Savdo'])
         
         # Yig'indi sanalar bo'yicha
         for col in date_cols:
-            daily_sum = pivot_df[col].sum()
+            # col mavjudligini tekshirish muhim
+            daily_sum = pivot_df.get(col, pd.Series([0])).sum()
             total_line += " | " + f"{daily_sum:.1f}".rjust(col_widths[col])
             
         report_lines.append(separator)
         report_lines.append(total_line)
 
 
-        final_report = "📊 **Kunlik Savdo Hisoboti** (KG):\n\n"
+        final_report = f"📊 **Kunlik Savdo Hisoboti** ({datetime.now().strftime('%Y-%m-%d')} holatiga):\n\n"
         final_report += "```\n"
         final_report += "\n".join(report_lines)
         final_report += "\n```"
