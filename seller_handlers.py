@@ -383,3 +383,24 @@ async def cancel_handler(callback_or_message: [CallbackQuery, Message], state: F
         await callback_or_message.answer()
     else:
         await callback_or_message.answer(text, reply_markup=kb.seller_main_kb)
+
+# seller_handlers.py faylining eng oxirida
+
+@seller_router.message()
+async def handle_all_other_messages(message: Message, state: FSMContext):
+    """
+    Agar foydalanuvchi FSM holatida bo'lmasa va yuqoridagi 
+    handlerlarning hech biri ishlamasa, bu xabarga javob beradi.
+    """
+    current_state = await state.get_state()
+    
+    if current_state:
+        # Agar FSM holatida bo'lsa, ammo noto'g'ri kiritma yuborgan bo'lsa
+        await message.answer("⚠️ Noto'g'ri kiritma. Iltimos, kutilgan formatdagi ma'lumotni kiriting yoki /cancel bosing.")
+    else:
+        # Oddiy start/menyuga tushmagan bo'lsa
+        await message.answer("Sizni tushunmadim. Iltimos, /start buyrug'ini bosing yoki menudan tanlang.", 
+                             reply_markup=kb.seller_main_kb)
+    
+    # Eslatma: Bu handler ham Adminlar uchun ishlamaydi, chunki Adminlar 
+    # admin_router filtridan o'ta olmaydi.
