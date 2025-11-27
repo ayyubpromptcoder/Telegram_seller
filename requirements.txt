@@ -8,7 +8,7 @@ asyncpg==0.28.0
 python-dotenv==1.0.0
 
 # Ma'lumotlarni tahlil qilish va Pivot hisobotlari uchun
-pandas==2.2.0
+pandas==1.5.3
 # Google Sheets API bilan ishlash
 gspread==6.0.2
 google-auth==2.27.0
