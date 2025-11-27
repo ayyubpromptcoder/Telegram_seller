@@ -13,11 +13,8 @@ pandas==2.0.3
 gspread==6.0.2
 google-auth==2.27.0
 google-api-python-client==2.115.0
-google-oauth2-tool==2024.1.0 # Google Cloud bilan ishlash uchun
-
 # Asinxron Webhook serveri
 aiohttp==3.9.5
 multidict==6.0.5 # Aiohttp bog'liqligi
-
 # Production (ishlab chiqarish) muhitida ishlatiladigan WSGI/ASGI serveri
 gunicorn==21.2.0
