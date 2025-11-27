@@ -41,11 +41,13 @@ class DebtState(StatesGroup):
 # ==============================================================================
 
 # Faqat ADMIN BO'LMAGAN foydalanuvchilar uchun ishlaydigan handler
-@seller_router.message(CommandStart(), ~F.from_user.id.in_(ADMIN_IDS))
-@seller_router.message(F.text == "🔝 Asosiy Menu", ~F.from_user.id.in_(ADMIN_IDS))
+@seller_router.message(CommandStart())
+@seller_router.message(F.text == "🔝 Asosiy Menu")
 async def cmd_start_seller(message: Message, state: FSMContext):
     """Botni ishga tushirish, Telegram ID orqali avtomatik login qilish."""
     await state.clear()
+    
+    # ... qolgan mantiq (loginni tekshirish va hokazo)
     
     # 1. Telegram ID orqali agentni topish
     agent_data = await database.get_agent_by_telegram_id(message.from_user.id)
