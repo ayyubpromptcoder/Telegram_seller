@@ -1,17 +1,17 @@
-# sheets_api.py
-
 import gspread
 from google.oauth2.service_account import Credentials
 import logging
 from datetime import datetime
-import calendar
-import json # JSON formatidagi ma'lumotlarni tahlil qilish uchun
-from config import SPREADSHEET_ID, SHEET_NAMES, SERVICE_ACCOUNT_JSON # Yangi o'zgaruvchi import qilindi
+import json
+from config import SPREADSHEET_ID, SHEET_NAMES, SERVICE_ACCOUNT_JSON
+
+# Asyncio bilan sinxron kodni bloklanmasdan ishlatish uchun
+import asyncio
 
 logging.basicConfig(level=logging.INFO)
 
 # ==============================================================================
-# I. GOOGLE SHEETSGA ULANISH FUNKSIYASI (JSON Matnidan)
+# I. GOOGLE SHEETSGA ULANISH FUNKSIYASI (SINXRON - o'zgarmadi)
 # ==============================================================================
 
 def get_sheets_client():
@@ -21,13 +21,8 @@ def get_sheets_client():
             logging.error("SPREADSHEET_ID yoki SERVICE_ACCOUNT_JSON o'rnatilmagan.")
             return None
             
-        # JSON matnini tahlil qilish va uni to'g'ridan-to'g'ri credentials yaratish uchun ishlatish
         creds_json = json.loads(SERVICE_ACCOUNT_JSON)
-        
-        # Kerakli ruxsatlar doirasini belgilash
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        
-        # Service Account credentials yaratish
         creds = Credentials.from_service_account_info(creds_json, scopes=scope) 
         
         client = gspread.authorize(creds)
@@ -38,34 +33,26 @@ def get_sheets_client():
         return None
 
 # ==============================================================================
-# II. YORDAMCHI FUNKSIYALAR
+# II. YORDAMCHI FUNKSIYALAR (SINXRON - o'zgarmadi)
 # ==============================================================================
 
 def get_or_create_monthly_sheet(spreadsheet: gspread.Spreadsheet) -> gspread.Worksheet:
     """Joriy oy uchun (YYYY-MM) varaqni topadi yoki yaratadi."""
     now = datetime.now()
-    month_name = now.strftime("%Y-%m") # Dinamik varaq nomi: 2025-11
+    month_name = now.strftime("%Y-%m")
     
     try:
-        # Varaq mavjudligini tekshirish
         worksheet = spreadsheet.worksheet(month_name)
         logging.info(f"Varaq topildi: {month_name}")
         return worksheet
     except gspread.WorksheetNotFound:
-        # Varaq mavjud emas, yaratish
         logging.info(f"Varaq topilmadi, {month_name} yaratilmoqda...")
-        
-        # Yangi varaqni yaratish va boshini yozish
-        # Eslatma: Bu yerda 1-indexga joylashtirish mantiqi yo'q, yangi varaq oxiriga qo'shiladi.
         worksheet = spreadsheet.add_worksheet(title=month_name, rows=1000, cols=15)
-        
-        # Sarlavhalar qatorini yozish
         header = [
             "Sana (YYYY-MM-DD)", "Vaqt (HH:MM:SS)", "Agent_Ismi", "Mahsulot_Nomi", 
             "Miqdor_KG", "Savdo_Narxi", "Jami_Summa"
         ]
         worksheet.append_row(header)
-        
         logging.info(f"Yangi varaq {month_name} muvaffaqiyatli yaratildi.")
         return worksheet
     except Exception as e:
@@ -73,10 +60,10 @@ def get_or_create_monthly_sheet(spreadsheet: gspread.Spreadsheet) -> gspread.Wor
         return None
 
 # ==============================================================================
-# III. MA'LUMOT KIRITISH (SYNC) FUNKSIYALARI
+# III. MA'LUMOT KIRITISH (SINXRON) FUNKSIYALARI - o'zgarmadi
 # ==============================================================================
 
-def write_stock_txn_to_sheets(agent_name: str, product_name: str, qty_kg: float, issue_price: float, total_cost: float) -> bool:
+def write_stock_txn_to_sheets_sync(agent_name: str, product_name: str, qty_kg: float, issue_price: float, total_cost: float) -> bool:
     """Agentga berilgan tovar (stok) amaliyotini Sheetsga yozadi."""
     spreadsheet = get_sheets_client()
     if not spreadsheet: return False
@@ -98,7 +85,7 @@ def write_stock_txn_to_sheets(agent_name: str, product_name: str, qty_kg: float,
         logging.error(f"Stok tranzaksiyasini Sheetsga yozishda xato: {e}")
         return False
 
-def write_debt_txn_to_sheets(agent_name: str, txn_type: str, amount: float, txn_date: str, comment: str) -> bool:
+def write_debt_txn_to_sheets_sync(agent_name: str, txn_type: str, amount: float, txn_date: str, comment: str) -> bool:
     """Agentning pul to'lovi yoki avans amaliyotini Sheetsga yozadi."""
     spreadsheet = get_sheets_client()
     if not spreadsheet: return False
@@ -119,13 +106,12 @@ def write_debt_txn_to_sheets(agent_name: str, txn_type: str, amount: float, txn_
         return False
 
 
-def write_sale_to_sheets(agent_name: str, product_name: str, qty_kg: float, sale_price: float, total_amount: float, sale_date: str, sale_time: str) -> bool:
+def write_sale_to_sheets_sync(agent_name: str, product_name: str, qty_kg: float, sale_price: float, total_amount: float, sale_date: str, sale_time: str) -> bool:
     """Agentning savdo tranzaksiyasini dinamik oylik Sheets varag'iga yozadi."""
     spreadsheet = get_sheets_client()
     if not spreadsheet: return False
 
     try:
-        # Dinamik oylik varaqni olish yoki yaratish
         worksheet = get_or_create_monthly_sheet(spreadsheet)
         if not worksheet: return False
         
@@ -143,3 +129,29 @@ def write_sale_to_sheets(agent_name: str, product_name: str, qty_kg: float, sale
     except Exception as e:
         logging.error(f"Savdo tranzaksiyasini Sheetsga yozishda xato: {e}")
         return False
+
+# ==============================================================================
+# IV. ASINXRON PROKSI (PROXY) FUNKSIYALARI
+# ==============================================================================
+# Boshqa fayllar endi faqat quyidagi funksiyalarni chaqirishi kerak.
+
+async def write_stock_txn_to_sheets(agent_name: str, product_name: str, qty_kg: float, issue_price: float, total_cost: float) -> bool:
+    """Sinxron stok yozish funksiyasini bloklanmasdan chaqiradi."""
+    return await asyncio.to_thread(
+        write_stock_txn_to_sheets_sync, 
+        agent_name, product_name, qty_kg, issue_price, total_cost
+    )
+
+async def write_debt_txn_to_sheets(agent_name: str, txn_type: str, amount: float, txn_date: str, comment: str) -> bool:
+    """Sinxron pul harakati funksiyasini bloklanmasdan chaqiradi."""
+    return await asyncio.to_thread(
+        write_debt_txn_to_sheets_sync, 
+        agent_name, txn_type, amount, txn_date, comment
+    )
+
+async def write_sale_to_sheets(agent_name: str, product_name: str, qty_kg: float, sale_price: float, total_amount: float, sale_date: str, sale_time: str) -> bool:
+    """Sinxron savdo yozish funksiyasini bloklanmasdan chaqiradi."""
+    return await asyncio.to_thread(
+        write_sale_to_sheets_sync, 
+        agent_name, product_name, qty_kg, sale_price, total_amount, sale_date, sale_time
+    )
