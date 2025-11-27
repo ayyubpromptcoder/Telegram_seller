@@ -2,103 +2,133 @@
 
 import asyncpg
 import logging
+import pandas as pd
+import asyncio # Yangi import
+from functools import wraps # Yangi import
 from config import DATABASE_URL
+import sheets_api # Endi u sinxron funksiyalarni o'z ichiga oladi
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime
-import pandas as pd
-import sheets_api
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- I. Ulanishni Boshqarish ---
+# Global ulanish havzasi (Connection Pool)
+DB_POOL: Optional[asyncpg.Pool] = None
 
-async def connect_db():
-    """PostgreSQLga ulanishni ta'minlaydi."""
-    try:
-        conn = await asyncpg.connect(DATABASE_URL)
-        return conn
-    except Exception as e:
-        logging.error(f"PostgreSQLga ulanishda xato: {e}")
-        return None
+# --- Yordamchi Funksiyalar va Dekorator ---
 
-async def create_tables():
+async def init_db_pool() -> Optional[asyncpg.Pool]:
+    """Ulanishlar havzasini (Connection Pool) initsializatsiya qiladi."""
+    global DB_POOL
+    if DB_POOL is None:
+        try:
+            DB_POOL = await asyncpg.create_pool(DATABASE_URL, min_size=5, max_size=20)
+            logging.info("PostgreSQL ulanish havzasi muvaffaqiyatli initsializatsiya qilindi.")
+        except Exception as e:
+            logging.error(f"PostgreSQL ulanish havzasini initsializatsiya qilishda xato: {e}")
+            DB_POOL = None
+    return DB_POOL
+
+def with_connection(func):
+    """
+    Funksiyani asyncpg ulanish havzasi yordamida ulanishni olish va yakunlash uchun o'raydi (decorator).
+    Barcha DB funksiyalari endi bu dekoratordan foydalanadi.
+    """
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        pool = await init_db_pool()
+        if not pool:
+            logging.error(f"DB ulanish havzasi mavjud emas. {func.__name__} bekor qilindi.")
+            # Natija turi (agar ulanish bo'lmasa) funksiya nomiga qarab qaytariladi
+            if func.__name__.startswith(('add_', 'update_', 'create_')):
+                return False
+            elif func.__name__.startswith('get_all'):
+                return []
+            else:
+                return None if 'optional' in func.__annotations__.get('return', '').lower() else (0.0, 0.0)
+
+        # Pool'dan ulanishni oling va uni funktsiyaga yuboring
+        async with pool.acquire() as conn:
+            return await func(conn, *args, **kwargs)
+    return wrapper
+
+# --- I. Jadvallarni Yaratish ---
+
+async def create_tables() -> bool:
     """Ma'lumotlar bazasi jadvallarini yaratadi (Agar mavjud bo'lmasa)."""
-    conn = await connect_db()
-    if not conn: return False
+    pool = await init_db_pool()
+    if not pool: return False
 
-    try:
-        # AGENTS jadvali (telegram_id ustuni qo'shildi)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS agents (
-                agent_name VARCHAR(255) PRIMARY KEY,
-                region_mfy VARCHAR(100) NOT NULL,
-                phone VARCHAR(50),
-                password VARCHAR(50) NOT NULL,
-                telegram_id BIGINT UNIQUE -- Agent IDsini bot eslab qoladi
-            );
-        """)
+    async with pool.acquire() as conn:
+        try:
+            # AGENTS jadvali
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS agents (
+                    agent_name VARCHAR(255) PRIMARY KEY,
+                    region_mfy VARCHAR(100) NOT NULL,
+                    phone VARCHAR(50),
+                    password VARCHAR(50) NOT NULL,
+                    telegram_id BIGINT UNIQUE
+                );
+            """)
 
-        # PRODUCTS jadvali
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS products (
-                name VARCHAR(255) PRIMARY KEY,
-                price NUMERIC(10, 2) NOT NULL
-            );
-        """)
+            # PRODUCTS jadvali
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS products (
+                    name VARCHAR(255) PRIMARY KEY,
+                    price NUMERIC(10, 2) NOT NULL
+                );
+            """)
 
-        # SALES jadvali (Savdo tranzaksiyalari)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS sales (
-                sale_id SERIAL PRIMARY KEY,
-                agent_name VARCHAR(255) REFERENCES agents(agent_name),
-                product_name VARCHAR(255) REFERENCES products(name),
-                qty_kg NUMERIC(10, 2) NOT NULL,
-                sale_price NUMERIC(10, 2) NOT NULL,
-                total_amount NUMERIC(15, 2) NOT NULL,
-                sale_date DATE NOT NULL,
-                sale_time TIME NOT NULL
-            );
-        """)
-        
-        # STOCK jadvali (Qarzni hisoblash uchun Issue_Price bo'yicha)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS stock (
-                entry_id SERIAL PRIMARY KEY,
-                agent_name VARCHAR(255) REFERENCES agents(agent_name),
-                product_name VARCHAR(255) REFERENCES products(name),
-                quantity_kg NUMERIC(10, 2) NOT NULL,
-                issue_price NUMERIC(10, 2) NOT NULL,
-                total_cost NUMERIC(15, 2) NOT NULL
-            );
-        """)
+            # SALES jadvali (Savdo tranzaksiyalari)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS sales (
+                    sale_id SERIAL PRIMARY KEY,
+                    agent_name VARCHAR(255) REFERENCES agents(agent_name),
+                    product_name VARCHAR(255) REFERENCES products(name),
+                    qty_kg NUMERIC(10, 2) NOT NULL,
+                    sale_price NUMERIC(10, 2) NOT NULL,
+                    total_amount NUMERIC(15, 2) NOT NULL,
+                    sale_date DATE NOT NULL,
+                    sale_time TIME NOT NULL
+                );
+            """)
+            
+            # STOCK jadvali (Qarzni hisoblash uchun Issue_Price bo'yicha)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS stock (
+                    entry_id SERIAL PRIMARY KEY,
+                    agent_name VARCHAR(255) REFERENCES agents(agent_name),
+                    product_name VARCHAR(255) REFERENCES products(name),
+                    quantity_kg NUMERIC(10, 2) NOT NULL,
+                    issue_price NUMERIC(10, 2) NOT NULL,
+                    total_cost NUMERIC(15, 2) NOT NULL
+                );
+            """)
 
-        # DEBT jadvali (Pul to'lovlari)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS debt (
-                debt_id SERIAL PRIMARY KEY,
-                agent_name VARCHAR(255) REFERENCES agents(agent_name),
-                transaction_type VARCHAR(50) NOT NULL, -- 'Qoplash', 'Avans'
-                amount NUMERIC(15, 2) NOT NULL, -- To'lov uchun manfiy, Avans uchun musbat
-                txn_date DATE NOT NULL,
-                comment TEXT
-            );
-        """)
-        logging.info("Barcha jadvallar muvaffaqiyatli yaratildi (yoki mavjud).")
-        return True
-    except Exception as e:
-        logging.error(f"Jadvallarni yaratishda xato: {e}")
-        return False
-    finally:
-        await conn.close() if conn else None
+            # DEBT jadvali (Pul to'lovlari)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS debt (
+                    debt_id SERIAL PRIMARY KEY,
+                    agent_name VARCHAR(255) REFERENCES agents(agent_name),
+                    transaction_type VARCHAR(50) NOT NULL, -- 'Qoplash', 'Avans'
+                    amount NUMERIC(15, 2) NOT NULL, -- To'lov uchun manfiy, Avans uchun musbat
+                    txn_date DATE NOT NULL,
+                    comment TEXT
+                );
+            """)
+            logging.info("Barcha jadvallar muvaffaqiyatli yaratildi (yoki mavjud).")
+            return True
+        except Exception as e:
+            logging.error(f"Jadvallarni yaratishda xato: {e}")
+            return False
 
-# --- II. Agent Mantig'i (SQL versiyasi) ---
+# --- II. Agent Mantig'i ---
 
-async def get_all_agents() -> List[Dict]:
+@with_connection
+async def get_all_agents(conn) -> List[Dict]:
     """Barcha agentlarni MFY va Ism bo'yicha tartiblangan ro'yxatini qaytaradi."""
-    conn = await connect_db()
-    if not conn: return []
     try:
-        # MFY va Agent_Name bo'yicha tartiblash talabi bajariladi
         records = await conn.fetch("""
             SELECT region_mfy, agent_name, phone, password, telegram_id
             FROM agents
@@ -108,13 +138,10 @@ async def get_all_agents() -> List[Dict]:
     except Exception as e:
         logging.error(f"Agentlar ro'yxatini olishda xato: {e}")
         return []
-    finally:
-        await conn.close() if conn else None
 
-async def get_agent_by_password(password: str) -> Optional[Dict]:
+@with_connection
+async def get_agent_by_password(conn, password: str) -> Optional[Dict]:
     """Parol orqali agentni topadi."""
-    conn = await connect_db()
-    if not conn: return None
     try:
         record = await conn.fetchrow("""
             SELECT region_mfy, agent_name, phone, password, telegram_id
@@ -125,13 +152,10 @@ async def get_agent_by_password(password: str) -> Optional[Dict]:
     except Exception as e:
         logging.error(f"Parol orqali agentni olishda xato: {e}")
         return None
-    finally:
-        await conn.close() if conn else None
         
-async def get_agent_by_telegram_id(telegram_id: int) -> Optional[Dict]:
-    """Telegram ID orqali agentni topadi (YANGI FUNKSIYA)."""
-    conn = await connect_db()
-    if not conn: return None
+@with_connection
+async def get_agent_by_telegram_id(conn, telegram_id: int) -> Optional[Dict]:
+    """Telegram ID orqali agentni topadi."""
     try:
         record = await conn.fetchrow("""
             SELECT region_mfy, agent_name, phone, password, telegram_id
@@ -142,13 +166,10 @@ async def get_agent_by_telegram_id(telegram_id: int) -> Optional[Dict]:
     except Exception as e:
         logging.error(f"Telegram ID orqali agentni olishda xato: {e}")
         return None
-    finally:
-        await conn.close() if conn else None
 
-async def get_agent_info(agent_name: str) -> Optional[Dict]:
+@with_connection
+async def get_agent_info(conn, agent_name: str) -> Optional[Dict]:
     """Agent nomiga ko'ra uning ma'lumotlarini qaytaradi."""
-    conn = await connect_db()
-    if not conn: return None
     try:
         record = await conn.fetchrow("""
             SELECT region_mfy, agent_name, phone, password, telegram_id
@@ -159,29 +180,26 @@ async def get_agent_info(agent_name: str) -> Optional[Dict]:
     except Exception as e:
         logging.error(f"Agent ma'lumotlarini olishda xato: {e}")
         return None
-    finally:
-        await conn.close() if conn else None
 
-async def add_new_agent(region: str, name: str, phone: str, password: str) -> bool:
+@with_connection
+async def add_new_agent(conn, region: str, name: str, phone: str, password: str) -> bool:
     """Yangi agentni bazaga kiritadi."""
-    conn = await connect_db()
-    if not conn: return False
     try:
         await conn.execute("""
             INSERT INTO agents (region_mfy, agent_name, phone, password)
             VALUES ($1, $2, $3, $4);
         """, region, name, phone, password)
         return True
+    except asyncpg.exceptions.UniqueViolationError:
+        logging.warning(f"Agent {name} allaqachon mavjud.")
+        return False
     except Exception as e:
         logging.error(f"Yangi agent qo'shishda xato: {e}")
         return False
-    finally:
-        await conn.close() if conn else None
 
-async def update_agent_telegram_id(agent_name: str, telegram_id: int) -> bool:
-    """Agent nomiga ko'ra uning Telegram ID'sini yangilaydi (Login vaqti) (YANGI FUNKSIYA)."""
-    conn = await connect_db()
-    if not conn: return False
+@with_connection
+async def update_agent_telegram_id(conn, agent_name: str, telegram_id: int) -> bool:
+    """Agent nomiga ko'ra uning Telegram ID'sini yangilaydi (Login vaqti)."""
     try:
         result = await conn.execute("""
             UPDATE agents
@@ -192,16 +210,13 @@ async def update_agent_telegram_id(agent_name: str, telegram_id: int) -> bool:
     except Exception as e:
         logging.error(f"Agent Telegram ID'sini yangilashda xato: {e}")
         return False
-    finally:
-        await conn.close() if conn else None
 
 
-# --- III. Mahsulot Mantig'i (SQL versiyasi) ---
+# --- III. Mahsulot Mantig'i ---
 
-async def get_all_products() -> List[Dict]:
+@with_connection
+async def get_all_products(conn) -> List[Dict]:
     """Barcha mahsulotlar ro'yxatini (nomi va narxi) qaytaradi."""
-    conn = await connect_db()
-    if not conn: return []
     try:
         records = await conn.fetch("""
             SELECT name, price
@@ -212,13 +227,10 @@ async def get_all_products() -> List[Dict]:
     except Exception as e:
         logging.error(f"Mahsulotlar ro'yxatini olishda xato: {e}")
         return []
-    finally:
-        await conn.close() if conn else None
 
-async def get_product_info(product_name: str) -> Optional[Dict]:
+@with_connection
+async def get_product_info(conn, product_name: str) -> Optional[Dict]:
     """Mahsulot nomiga ko'ra uning ma'lumotlarini qaytaradi."""
-    conn = await connect_db()
-    if not conn: return None
     try:
         record = await conn.fetchrow("""
             SELECT name, price
@@ -229,53 +241,44 @@ async def get_product_info(product_name: str) -> Optional[Dict]:
     except Exception as e:
         logging.error(f"Mahsulot ma'lumotlarini olishda xato: {e}")
         return None
-    finally:
-        await conn.close() if conn else None
 
-async def add_new_product(name: str, price: float) -> bool:
+@with_connection
+async def add_new_product(conn, name: str, price: float) -> bool:
     """Yangi mahsulotni bazaga kiritadi."""
-    conn = await connect_db()
-    if not conn: return False
     try:
         await conn.execute("""
             INSERT INTO products (name, price)
             VALUES ($1, $2);
         """, name, price)
         return True
+    except asyncpg.exceptions.UniqueViolationError:
+        logging.warning(f"Mahsulot {name} allaqachon mavjud.")
+        return False
     except Exception as e:
         logging.error(f"Yangi mahsulot qo'shishda xato: {e}")
         return False
-    finally:
-        await conn.close() if conn else None
 
-async def update_product_price(product_name: str, new_price: float) -> bool:
+@with_connection
+async def update_product_price(conn, product_name: str, new_price: float) -> bool:
     """Mahsulot narxini yangilaydi."""
-    conn = await connect_db()
-    if not conn: return False
     try:
         result = await conn.execute("""
             UPDATE products
             SET price = $1
             WHERE name = $2;
         """, new_price, product_name)
-        
-        # 'UPDATE 1' yoki 'UPDATE 0' qaytaradi.
         return result == 'UPDATE 1'
     except Exception as e:
         logging.error(f"Mahsulot narxini yangilashda xato: {e}")
         return False
-    finally:
-        await conn.close() if conn else None
 
-# --- IV. Hisob-kitob Mantig'i (SQL versiyasi) ---
+# --- IV. Hisob-kitob Mantig'i ---
 
-async def calculate_agent_stock(agent_name: str) -> List[Dict]:
+@with_connection
+async def calculate_agent_stock(conn, agent_name: str) -> List[Dict]:
     """
     Agentdagi har bir mahsulot bo'yicha qoldiq miqdorini (KG) hisoblaydi (Berilgan - Sotilgan).
-    (FUNKSIYA TO'LIQ ALMASHTIRILDI)
     """
-    conn = await connect_db()
-    if not conn: return []
     try:
         # Mahsulotlarni Berish (STOCK) va Sotish (SALES) operatsiyalarini birlashtirish
         records = await conn.fetch("""
@@ -304,7 +307,8 @@ async def calculate_agent_stock(agent_name: str) -> List[Dict]:
             LEFT JOIN StockIn si ON p.name = si.product_name
             LEFT JOIN SalesOut so ON p.name = so.product_name
             -- Agentga berilgan yoki sotilgan mahsulotlarni filtrlaymiz
-            WHERE COALESCE(si.total_received, 0) > 0 OR COALESCE(so.total_sold, 0) > 0;
+            WHERE COALESCE(si.total_received, 0) > 0 OR COALESCE(so.total_sold, 0) > 0
+            ORDER BY p.name ASC;
         """, agent_name)
         
         return [dict(r) for r in records]
@@ -312,13 +316,10 @@ async def calculate_agent_stock(agent_name: str) -> List[Dict]:
     except Exception as e:
         logging.error(f"Agent stogini hisoblashda xato: {e}")
         return []
-    finally:
-        await conn.close() if conn else None
 
-async def calculate_agent_debt(agent_name: str) -> Tuple[float, float]:
+@with_connection
+async def calculate_agent_debt(conn, agent_name: str) -> Tuple[float, float]:
     """Agentning jami qarzdorligi (musbat) va haqdorligi (manfiy) ni hisoblaydi."""
-    conn = await connect_db()
-    if not conn: return 0.0, 0.0
     
     current_debt = 0.0
     
@@ -332,7 +333,6 @@ async def calculate_agent_debt(agent_name: str) -> Tuple[float, float]:
         current_debt += float(stock_cost)
         
         # 2. QARZDORLIK tranzaksiyalari (To'lovlar/Avanslar - Amount)
-        # Note: 'amount' manfiy (to'lov) yoki musbat (avans) bo'lishi mumkin.
         debt_amount = await conn.fetchval("""
             SELECT COALESCE(SUM(amount), 0)
             FROM debt
@@ -342,22 +342,19 @@ async def calculate_agent_debt(agent_name: str) -> Tuple[float, float]:
 
         # Natijani ajratish:
         if current_debt >= 0:
-            return current_debt, 0.0 # Qarzdorlik, Haqdorlik (0)
+            return current_debt, 0.0 # Qarzdorlik (Agent qarz), Haqdorlik (0)
         else:
-            return 0.0, abs(current_debt) # Qarzdorlik (0), Haqdorlik
+            return 0.0, abs(current_debt) # Qarzdorlik (0), Haqdorlik (Kompaniya qarz)
             
     except Exception as e:
         logging.error(f"Agent qarzini hisoblashda xato: {e}")
         return 0.0, 0.0
-    finally:
-        await conn.close() if conn else None
 
 # --- V. Ma'lumot Kiritish Mantig'i (SQL + Sheets Sinkronlash) ---
 
-async def add_stock_transaction(agent_name: str, product_name: str, qty_kg: float, issue_price: float) -> bool:
+@with_connection
+async def add_stock_transaction(conn, agent_name: str, product_name: str, qty_kg: float, issue_price: float) -> bool:
     """Agentga tovar berish amaliyotini yozadi va Sheetsga sinkronlaydi."""
-    conn = await connect_db()
-    if not conn: return False
     
     total_cost = qty_kg * issue_price
     
@@ -368,21 +365,17 @@ async def add_stock_transaction(agent_name: str, product_name: str, qty_kg: floa
             VALUES ($1, $2, $3, $4, $5);
         """, agent_name, product_name, qty_kg, issue_price, total_cost)
         
-        # 2. Sheetsga yozish (ASOSIY SINKRONLASh)
-        # Eslatma: sheets_api ichidagi funksiyalar allaqachon async emas.
-        sheets_api.write_stock_txn_to_sheets(agent_name, product_name, qty_kg, issue_price, total_cost)
+        # 2. Sheetsga yozish (ASOSIY SINKRONLASh - Asinxron muhitni bloklamaslik uchun to_thread() ishlatiladi)
+        await asyncio.to_thread(sheets_api.write_stock_txn_to_sheets, agent_name, product_name, qty_kg, issue_price, total_cost)
         
         return True
     except Exception as e:
         logging.error(f"Stok tranzaksiyasini qo'shishda xato: {e}")
         return False
-    finally:
-        await conn.close() if conn else None
         
-async def add_debt_payment(agent_name: str, amount: float, comment: str, is_payment: bool = True) -> bool:
+@with_connection
+async def add_debt_payment(conn, agent_name: str, amount: float, comment: str, is_payment: bool = True) -> bool:
     """Agent tomonidan pul to'lash/avans berish amaliyotini yozadi va Sheetsga sinkronlaydi."""
-    conn = await connect_db()
-    if not conn: return False
 
     final_amount = -amount if is_payment else amount
     txn_type = "Qoplash" if is_payment else "Avans"
@@ -396,19 +389,16 @@ async def add_debt_payment(agent_name: str, amount: float, comment: str, is_paym
         """, agent_name, txn_type, final_amount, txn_date, comment)
         
         # 2. Sheetsga yozish (ASOSIY SINKRONLASh)
-        sheets_api.write_debt_txn_to_sheets(agent_name, txn_type, final_amount, txn_date, comment)
+        await asyncio.to_thread(sheets_api.write_debt_txn_to_sheets, agent_name, txn_type, final_amount, txn_date, comment)
         
         return True
     except Exception as e:
         logging.error(f"Qarz to'lovini/Avansni qo'shishda xato: {e}")
         return False
-    finally:
-        await conn.close() if conn else None
 
-async def add_sales_transaction(agent_name: str, product_name: str, qty_kg: float, sale_price: float) -> bool:
+@with_connection
+async def add_sales_transaction(conn, agent_name: str, product_name: str, qty_kg: float, sale_price: float) -> bool:
     """Agentning savdo tranzaksiyasini yozadi va Sheetsga sinkronlaydi (oylik varaq)."""
-    conn = await connect_db()
-    if not conn: return False
 
     total_amount = qty_kg * sale_price
     now = datetime.now()
@@ -423,25 +413,20 @@ async def add_sales_transaction(agent_name: str, product_name: str, qty_kg: floa
         """, agent_name, product_name, qty_kg, sale_price, total_amount, sale_date, sale_time)
         
         # 2. Sheetsga yozish (ASOSIY SINKRONLASh - Dinamik oylik varaqqa)
-        sheets_api.write_sale_to_sheets(agent_name, product_name, qty_kg, sale_price, total_amount, sale_date, sale_time)
+        await asyncio.to_thread(sheets_api.write_sale_to_sheets, agent_name, product_name, qty_kg, sale_price, total_amount, sale_date, sale_time)
 
         return True
     except Exception as e:
         logging.error(f"Savdo tranzaksiyasini qo'shishda xato: {e}")
         return False
-    finally:
-        await conn.close() if conn else None
 
 # --- VI. KUNLIK SAVDO PIVOT HISOBOTI (Monospace) ---
 
-async def get_daily_sales_pivot_report() -> Optional[str]:
+@with_connection
+async def get_daily_sales_pivot_report(conn) -> Optional[str]:
     """
-    Kunlik savdo ma'lumotlarini bazadan oladi va rasmdagi kabi
-    Monospace formatda chiqaradi (MFY / Agent / Sana bo'yicha pivot).
+    Kunlik savdo ma'lumotlarini bazadan oladi va monospace formatda chiqaradi.
     """
-    conn = await connect_db()
-    if not conn: return "⚠️ Ma'lumotlar bazasiga ulanib bo'lmadi."
-
     try:
         # 1. Barcha sotuv va agent ma'lumotlarini olish
         records = await conn.fetch("""
@@ -481,24 +466,26 @@ async def get_daily_sales_pivot_report() -> Optional[str]:
         # 6. Tartiblash (MFY keyin Agent nomi bo'yicha)
         pivot_df = pivot_df.sort_values(by=['MFY_Nomi', 'Agent_Ismi'], ascending=[True, True])
         
-        # 7. Ustunlarni rasmdagi tartibga keltirish
+        # 7. Ustunlarni tartibga keltirish
         date_cols = [col for col in pivot_df.columns if col not in ['MFY_Nomi', 'Agent_Ismi', 'Jami_Savdo']]
         date_cols.sort()
         
-        final_cols = ['Jami_Savdo'] + date_cols
-        pivot_df = pivot_df[final_cols]
+        # Faqat so'nggi 7 kunlik ma'lumotni olish uchun
+        date_cols = date_cols[-7:] 
         
+        final_cols = ['Jami_Savdo'] + date_cols
         pivot_df = pivot_df.reset_index()
 
-        # 8. Matnni Monospace formatida shakllantirish (Oldingi yechim kabi)
+        # 8. Matnni Monospace formatida shakllantirish
         
+        # Ustun kengliklarini hisoblash
         col_widths = {
-            'MFY_Nomi': max(pivot_df['MFY_Nomi'].str.len().max() or 10, 8), # Kamida 8
-            'Agent_Ismi': max(pivot_df['Agent_Ismi'].str.len().max() or 15, 12), # Kamida 12
-            'Jami_Savdo': 10 # Maksimal 10 belgi (misol: 1234.50 kg)
+            'MFY_Nomi': max(pivot_df['MFY_Nomi'].astype(str).str.len().max() or 8, 8),
+            'Agent_Ismi': max(pivot_df['Agent_Ismi'].astype(str).str.len().max() or 12, 12),
+            'Jami_Savdo': 10 # 1234.5 kg
         }
         for col in date_cols:
-            col_widths[col] = 7
+            col_widths[col] = 7 # 01-01 format + .1f
 
         report_lines = []
         
@@ -561,5 +548,3 @@ async def get_daily_sales_pivot_report() -> Optional[str]:
     except Exception as e:
         logging.error(f"Pivot hisobotini yaratishda xato: {e}")
         return f"⚠️ Hisobotni tayyorlashda ichki xato yuz berdi: {e}"
-    finally:
-        await conn.close() if conn else None
