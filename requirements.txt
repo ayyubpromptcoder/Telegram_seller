@@ -1,8 +1,24 @@
+# Asosiy bot kutubxonasi (aiogram 3.10.0 talab qilingan)
 aiogram==3.10.0
-asyncpg
-python-dotenv
-pandas
+
+# Asinxron PostgreSQL drayveri
+asyncpg==0.28.0
+
+# .env fayllaridan sozlamalarni yuklash
+python-dotenv==1.0.0
+
+# Ma'lumotlarni tahlil qilish va Pivot hisobotlari uchun
+pandas==2.2.0
+
+# Google Sheets API bilan ishlash
 gspread==6.0.2
-google-auth
+google-auth==2.27.0
+google-api-python-client==2.115.0
+google-oauth2-tool==2024.1.0 # Google Cloud bilan ishlash uchun
+
+# Asinxron Webhook serveri
 aiohttp==3.9.5
-gunicorn
+multidict==6.0.5 # Aiohttp bog'liqligi
+
+# Production (ishlab chiqarish) muhitida ishlatiladigan WSGI/ASGI serveri
+gunicorn==21.2.0
