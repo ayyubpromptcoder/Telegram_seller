@@ -97,18 +97,10 @@ async def on_startup(app: web.Application):
     )
 
     # 4. Administratorga xabar berish (Agar admin /start bosmagan bo'lsa, Warning chiqadi)
-    for admin_id in ADMIN_IDS:
-        try:
-            admin_id = int(admin_id) 
-            await bot.send_message(admin_id, "🚀 Bot Webhook rejimida ishga tushdi va Render.com da ulandi.")
-        except Exception as e:
-            logging.warning(f"Admin ID {admin_id} ga xabar yuborishda xato: {e}")
-
 
 async def on_shutdown(app: web.Application):
     """Server to'xtaganda (bir marta) bajariladigan funksiya."""
     logging.warning('Server o\'chirilmoqda...')
-    
     # Webhookni o'chirib qo'yish va bot sessiyasini yopish
     await bot.delete_webhook()
     await bot.session.close()
