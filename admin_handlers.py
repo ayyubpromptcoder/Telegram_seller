@@ -18,8 +18,9 @@ admin_router = Router()
 # Faqat ADMIN_IDS ro'yxatidagi foydalanuvchilarning xabarlarini o'tkazadi.
 # Admin bo'lmaganlarning xabarlari avtomatik ravishda keyingi routerga (seller_router) o'tadi.
 # ==============================================================================
-admin_router.message.filter(F.from_user.id.in_(ADMIN_IDS))
-admin_router.callback_query.filter(F.from_user.id.in_(ADMIN_IDS))
+#admin_router.message.filter(F.from_user.id.in_(ADMIN_IDS))
+#admin_router.callback_query.filter(F.from_user.id.in_(ADMIN_IDS))
+
 
 
 # ==============================================================================
@@ -82,8 +83,8 @@ def get_sotuvchi_keyboard() -> types.InlineKeyboardMarkup:
 # IV. ADMIN ASOSIY BUYRUQLARI VA MENYULARI
 # ==============================================================================
 
-@admin_router.message(Command("start"))
-@admin_router.message(Command("admin_menu"))
+@admin_router.message(Command("start"), F.from_user.id.in_(ADMIN_IDS)) # 👈 Filtrni qo'shing
+@admin_router.message(Command("admin_menu"), F.from_user.id.in_(ADMIN_IDS)) # 👈 Filtrni qo'shing
 async def handle_start(message: types.Message):
     """Adminlar uchun start buyrug'i va asosiy menu. (Ichki tekshiruv olib tashlandi)."""
     
@@ -99,20 +100,20 @@ async def handle_start(message: types.Message):
     await message.answer("Siz Admin panelidasiz. Boshqaruv menyusini tanlang:", reply_markup=keyboard)
 
 
-@admin_router.message(Command("mahsulot"))
+@admin_router.message(Command("mahsulot"), F.from_user.id.in_(ADMIN_IDS))
 async def handle_mahsulot_menu(message: types.Message):
     """'Mahsulot' buyrug'iga ishlov berish. (Ichki tekshiruv olib tashlandi)."""
     
     await message.answer("Mahsulotlar bo'limi:", reply_markup=get_mahsulot_keyboard())
 
 
-@admin_router.message(Command("sotuvchi"))
+@admin_router.message(Command("sotuvchi"), F.from_user.id.in_(ADMIN_IDS))
 async def handle_sotuvchi_menu(message: types.Message):
     """'Sotuvchi' buyrug'iga ishlov berish. (Ichki tekshiruv olib tashlandi)."""
     
     await message.answer("Sotuvchilar bo'limi:", reply_markup=get_sotuvchi_keyboard())
 
-@admin_router.message(F.text == "📊 Kunlik Savdo Hisoboti")
+@admin_router.message(F.text == "📊 Kunlik Savdo Hisoboti", F.from_user.id.in_(ADMIN_IDS))
 async def handle_daily_sales_report(message: types.Message):
     """Kunlik savdo hisobotini bazadan olib, monospace formatda chiqaradi. (Ichki tekshiruv olib tashlandi)."""
     
@@ -129,7 +130,7 @@ async def handle_daily_sales_report(message: types.Message):
 
 # --- 5.1 Yangi mahsulot kiritish (FSM) ---
 
-@admin_router.callback_query(F.data == "add_new_product")
+@admin_router.callback_query(F.data == "add_new_product", F.from_user.id.in_(ADMIN_IDS))
 async def start_add_product(callback: types.CallbackQuery, state: FSMContext):
     """Yangi mahsulot nomini so'rashni boshlaydi."""
     await callback.message.edit_text("Yangi mahsulot nomini kiriting:")
@@ -167,7 +168,7 @@ async def process_product_price(message: types.Message, state: FSMContext):
 
 # --- 5.2 Mahsulotlar ro'yxati va narxni yangilash ---
 
-@admin_router.callback_query(F.data == "list_products")
+@admin_router.callback_query(F.data == "list_products", F.from_user.id.in_(ADMIN_IDS))
 async def list_products(callback: types.CallbackQuery):
     """Barcha mahsulotlarni buttonlar sifatida ko'rsatadi."""
     products = await database.get_all_products()
@@ -184,7 +185,7 @@ async def list_products(callback: types.CallbackQuery):
     await callback.message.edit_text("Mahsulotni tanlang:", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
     await callback.answer()
 
-@admin_router.callback_query(F.data.startswith("product_info:"))
+@admin_router.callback_query(F.data.startswith("product_info:"), F.from_user.id.in_(ADMIN_IDS))
 async def show_product_info(callback: types.CallbackQuery, state: FSMContext):
     """Tanlangan mahsulot narxini ko'rsatadi va yangilash imkonini beradi."""
     product_name = callback.data.split(":")[1]
@@ -207,7 +208,7 @@ async def show_product_info(callback: types.CallbackQuery, state: FSMContext):
         await callback.message.answer("Mahsulot topilmadi.")
     await callback.answer()
 
-@admin_router.callback_query(F.data == "set_new_price_start")
+@admin_router.callback_query(F.data == "set_new_price_start", F.from_user.id.in_(ADMIN_IDS))
 async def start_set_new_price(callback: types.CallbackQuery, state: FSMContext):
     """Mahsulotning yangi narxini kiritish jarayonini boshlaydi."""
     data = await state.get_data()
@@ -251,267 +252,270 @@ async def process_set_new_price(message: types.Message, state: FSMContext):
 # VI. SOTUVCHI BO'LIMI MANTIG'I
 # ==============================================================================
 
+# admin_handlers.py fayli uchun tayyor kod (Sotuvchilarni boshqarish qismi)
+# F.from_user.id.in_(ADMIN_IDS) filtri barcha CallbackQuery handlerlariga qo'shilgan.
+
 # --- 6.1 Yangi sotuvchi qo'shish (FSM) ---
 
-@admin_router.callback_query(F.data == "add_new_agent_start")
+@admin_router.callback_query(F.data == "add_new_agent_start", F.from_user.id.in_(ADMIN_IDS))
 async def start_add_agent(callback: types.CallbackQuery, state: FSMContext):
-    """Agentning MFY/Region nomini so'rashni boshlaydi."""
-    await callback.message.edit_text("Agentning **MFY/Region** nomini kiriting:")
-    await state.set_state(AdminStates.ADD_AGENT_REGION)
-    await callback.answer()
+    """Agentning MFY/Region nomini so'rashni boshlaydi."""
+    await callback.message.edit_text("Agentning **MFY/Region** nomini kiriting:")
+    await state.set_state(AdminStates.ADD_AGENT_REGION)
+    await callback.answer()
 
 @admin_router.message(AdminStates.ADD_AGENT_REGION)
 async def process_agent_region(message: types.Message, state: FSMContext):
-    """MFYni qabul qilib, Agent Ismini so'raydi."""
-    await state.update_data(region=message.text.strip())
-    await message.answer("Agentning **Ismi va Familiyasini** kiriting (masalan: Alisher Bobojonov):")
-    await state.set_state(AdminStates.ADD_AGENT_NAME)
+    """MFYni qabul qilib, Agent Ismini so'raydi."""
+    await state.update_data(region=message.text.strip())
+    await message.answer("Agentning **Ismi va Familiyasini** kiriting (masalan: Alisher Bobojonov):")
+    await state.set_state(AdminStates.ADD_AGENT_NAME)
 
 @admin_router.message(AdminStates.ADD_AGENT_NAME)
 async def process_agent_name(message: types.Message, state: FSMContext):
-    """Agent Ismini qabul qilib, Telefon raqamini so'raydi."""
-    await state.update_data(name=message.text.strip())
-    await message.answer("Agentning **Telefon raqamini** kiriting (masalan: 991234567):")
-    await state.set_state(AdminStates.ADD_AGENT_PHONE)
+    """Agent Ismini qabul qilib, Telefon raqamini so'raydi."""
+    await state.update_data(name=message.text.strip())
+    await message.answer("Agentning **Telefon raqamini** kiriting (masalan: 991234567):")
+    await state.set_state(AdminStates.ADD_AGENT_PHONE)
 
 @admin_router.message(AdminStates.ADD_AGENT_PHONE)
 async def process_agent_phone(message: types.Message, state: FSMContext):
-    """Telefon raqamini qabul qilib, Parolni so'raydi."""
-    await state.update_data(phone=message.text.strip())
-    await message.answer("Agent uchun **maxfiy parolni** kiriting (Botga kirish uchun):")
-    await state.set_state(AdminStates.ADD_AGENT_PASSWORD)
+    """Telefon raqamini qabul qilib, Parolni so'raydi."""
+    await state.update_data(phone=message.text.strip())
+    await message.answer("Agent uchun **maxfiy parolni** kiriting (Botga kirish uchun):")
+    await state.set_state(AdminStates.ADD_AGENT_PASSWORD)
 
 @admin_router.message(AdminStates.ADD_AGENT_PASSWORD)
 async def process_agent_password(message: types.Message, state: FSMContext):
-    """Parolni qabul qilib, Agentni bazaga kiritadi."""
-    data = await state.get_data()
-    
-    region = data['region']
-    name = data['name']
-    phone = data['phone']
-    password = message.text.strip()
-    
-    # Baza: Yangi agent kiritish
-    if await database.add_new_agent(region, name, phone, password):
-        await message.answer(
-            f"✅ Yangi Agent bazaga kiritildi:\n"
-            f"**Ism:** {name}\n"
-            f"**MFY:** {region}\n"
-            f"**Parol:** `{password}`",
-            parse_mode="Markdown"
-        )
-    else:
-        await message.answer("❌ Agentni bazaga kiritishda xato yuz berdi. (Agent nomi takrorlangan bo'lishi mumkin)")
-        
-    await state.clear()
-    await message.answer("Sotuvchilar menyusiga qaytishingiz mumkin.", reply_markup=get_sotuvchi_keyboard())
+    """Parolni qabul qilib, Agentni bazaga kiritadi."""
+    data = await state.get_data()
+    
+    region = data['region']
+    name = data['name']
+    phone = data['phone']
+    password = message.text.strip()
+    
+    # Baza: Yangi agent kiritish
+    if await database.add_new_agent(region, name, phone, password):
+        await message.answer(
+            f"✅ Yangi Agent bazaga kiritildi:\n"
+            f"**Ism:** {name}\n"
+            f"**MFY:** {region}\n"
+            f"**Parol:** `{password}`",
+            parse_mode="Markdown"
+        )
+    else:
+        await message.answer("❌ Agentni bazaga kiritishda xato yuz berdi. (Agent nomi takrorlangan bo'lishi mumkin)")
+        
+    await state.clear()
+    await message.answer("Sotuvchilar menyusiga qaytishingiz mumkin.", reply_markup=get_sotuvchi_keyboard())
 
 # --- 6.2 Sotuvchilar ro'yxati va boshqaruvi menyusi ---
 
-@admin_router.callback_query(F.data == "list_all_agents_menu")
+@admin_router.callback_query(F.data == "list_all_agents_menu", F.from_user.id.in_(ADMIN_IDS))
 async def list_all_agents_menu(callback: types.CallbackQuery):
-    """Sotuvchilar ro'yxatini ko'rish usullari menyusi."""
-    keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[
-            [types.InlineKeyboardButton(text="👥 Barcha Sotuvchilar (Alifbo)", callback_data="list_all_agents_alpha")],
-            [types.InlineKeyboardButton(text="🏠 Sotuvchilar MFY bo'yicha", callback_data="list_agents_by_mfy")],
-            [types.InlineKeyboardButton(text="🔑 Sotuvchilar Parollari", callback_data="list_agent_passwords")]
-        ]
-    )
-    await callback.message.edit_text("Sotuvchilar ro'yxati:", reply_markup=keyboard)
-    await callback.answer()
+    """Sotuvchilar ro'yxatini ko'rish usullari menyusi."""
+    keyboard = types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [types.InlineKeyboardButton(text="👥 Barcha Sotuvchilar (Alifbo)", callback_data="list_all_agents_alpha")],
+            [types.InlineKeyboardButton(text="🏠 Sotuvchilar MFY bo'yicha", callback_data="list_agents_by_mfy")],
+            [types.InlineKeyboardButton(text="🔑 Sotuvchilar Parollari", callback_data="list_agent_passwords")]
+        ]
+    )
+    await callback.message.edit_text("Sotuvchilar ro'yxati:", reply_markup=keyboard)
+    await callback.answer()
 
 # 6.2.1 Barcha Sotuvchilar (Alifbo tartibi)
-@admin_router.callback_query(F.data == "list_all_agents_alpha")
+@admin_router.callback_query(F.data == "list_all_agents_alpha", F.from_user.id.in_(ADMIN_IDS))
 async def list_all_agents_alpha(callback: types.CallbackQuery):
-    """Barcha agentlarni MFY va Ism bo'yicha tartiblab chiqaradi."""
-    agents = await database.get_all_agents()
-    if not agents:
-        await callback.message.answer("Hozirda sotuvchilar ro'yxati bo'sh.")
-        await callback.answer()
-        return
-    
-    buttons = []
-    for agent in agents:
-        buttons.append([types.InlineKeyboardButton(text=f"{agent['agent_name']} ({agent['region_mfy']})", callback_data=f"agent_details:{agent['agent_name']}")])
-        
-    await callback.message.edit_text("Agentni tanlang (MFY / Ism bo'yicha tartiblangan):", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
-    await callback.answer()
+    """Barcha agentlarni MFY va Ism bo'yicha tartiblab chiqaradi."""
+    agents = await database.get_all_agents()
+    if not agents:
+        await callback.message.answer("Hozirda sotuvchilar ro'yxati bo'sh.")
+        await callback.answer()
+        return
+    
+    buttons = []
+    for agent in agents:
+        buttons.append([types.InlineKeyboardButton(text=f"{agent['agent_name']} ({agent['region_mfy']})", callback_data=f"agent_details:{agent['agent_name']}")])
+        
+    await callback.message.edit_text("Agentni tanlang (MFY / Ism bo'yicha tartiblangan):", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
+    await callback.answer()
 
 # 6.2.2 Sotuvchilar MFY bo'yicha
-@admin_router.callback_query(F.data == "list_agents_by_mfy")
+@admin_router.callback_query(F.data == "list_agents_by_mfy", F.from_user.id.in_(ADMIN_IDS))
 async def list_agents_by_mfy(callback: types.CallbackQuery):
-    """Barcha mavjud MFYlarni buttonlar sifatida ko'rsatadi."""
-    agents = await database.get_all_agents()
-    if not agents:
-        await callback.message.answer("Hozirda sotuvchilar ro'yxati bo'sh.")
-        await callback.answer()
-        return
-        
-    # MFY ro'yxatini olish (takrorlanmas va tartiblangan)
-    mfy_list = sorted(list(set(a['region_mfy'] for a in agents)))
-    
-    buttons = []
-    for mfy in mfy_list:
-        buttons.append([types.InlineKeyboardButton(text=mfy, callback_data=f"mfy_select:{mfy}")])
-        
-    await callback.message.edit_text("MFYni tanlang:", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
-    await callback.answer()
+    """Barcha mavjud MFYlarni buttonlar sifatida ko'rsatadi."""
+    agents = await database.get_all_agents()
+    if not agents:
+        await callback.message.answer("Hozirda sotuvchilar ro'yxati bo'sh.")
+        await callback.answer()
+        return
+        
+    # MFY ro'yxatini olish (takrorlanmas va tartiblangan)
+    mfy_list = sorted(list(set(a['region_mfy'] for a in agents)))
+    
+    buttons = []
+    for mfy in mfy_list:
+        buttons.append([types.InlineKeyboardButton(text=mfy, callback_data=f"mfy_select:{mfy}")])
+        
+    await callback.message.edit_text("MFYni tanlang:", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
+    await callback.answer()
 
-@admin_router.callback_query(F.data.startswith("mfy_select:"))
+@admin_router.callback_query(F.data.startswith("mfy_select:"), F.from_user.id.in_(ADMIN_IDS))
 async def list_agents_in_mfy(callback: types.CallbackQuery):
-    """Tanlangan MFYdagi agentlarni chiqaradi."""
-    mfy_name = callback.data.split(":")[1]
-    agents = await database.get_all_agents()
-    
-    mfy_agents = [a for a in agents if a['region_mfy'] == mfy_name]
-    
-    buttons = []
-    for agent in mfy_agents:
-        # Callback data: agent_details:{AgentNomi}
-        buttons.append([types.InlineKeyboardButton(text=agent['agent_name'], callback_data=f"agent_details:{agent['agent_name']}")])
-        
-    await callback.message.edit_text(f"**{mfy_name}** MFY agentlari:", parse_mode="Markdown", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
-    await callback.answer()
+    """Tanlangan MFYdagi agentlarni chiqaradi."""
+    mfy_name = callback.data.split(":")[1]
+    agents = await database.get_all_agents()
+    
+    mfy_agents = [a for a in agents if a['region_mfy'] == mfy_name]
+    
+    buttons = []
+    for agent in mfy_agents:
+        # Callback data: agent_details:{AgentNomi}
+        buttons.append([types.InlineKeyboardButton(text=agent['agent_name'], callback_data=f"agent_details:{agent['agent_name']}")])
+        
+    await callback.message.edit_text(f"**{mfy_name}** MFY agentlari:", parse_mode="Markdown", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
+    await callback.answer()
 
 
 # --- 6.3 Agent ma'lumotlari (Stok, Qarz, Parol) ---
 
-@admin_router.callback_query(F.data.startswith("agent_details:"))
+@admin_router.callback_query(F.data.startswith("agent_details:"), F.from_user.id.in_(ADMIN_IDS))
 async def show_agent_details(callback: types.CallbackQuery):
-    """Agent ma'lumotlarini ko'rish uchun menyuni ochadi."""
-    agent_name = callback.data.split(":")[1]
-    
-    await callback.message.edit_text(
-        f"**{agent_name}** agenti:", 
-        parse_mode="Markdown", 
-        reply_markup=get_agent_management_buttons(agent_name)
-    )
-    await callback.answer()
+    """Agent ma'lumotlarini ko'rish uchun menyuni ochadi."""
+    agent_name = callback.data.split(":")[1]
+    
+    await callback.message.edit_text(
+        f"**{agent_name}** agenti:", 
+        parse_mode="Markdown", 
+        reply_markup=get_agent_management_buttons(agent_name)
+    )
+    await callback.answer()
 
 
-@admin_router.callback_query(F.data.startswith("agent_pass:"))
+@admin_router.callback_query(F.data.startswith("agent_pass:"), F.from_user.id.in_(ADMIN_IDS))
 async def show_agent_password(callback: types.CallbackQuery):
-    """Agentning maxfiy parolini alert sifatida chiqaradi."""
-    agent_name = callback.data.split(":")[1]
-    agent = await database.get_agent_info(agent_name)
-    
-    if agent:
-        text = f"Agent: {agent_name}\nParol: {agent['password']}"
-    else:
-        text = "Agent topilmadi."
-        
-    await callback.answer(text, show_alert=True)
-    
-@admin_router.callback_query(F.data.startswith("agent_stock:"))
+    """Agentning maxfiy parolini alert sifatida chiqaradi."""
+    agent_name = callback.data.split(":")[1]
+    agent = await database.get_agent_info(agent_name)
+    
+    if agent:
+        text = f"Agent: {agent_name}\nParol: {agent['password']}"
+    else:
+        text = "Agent topilmadi."
+        
+    await callback.answer(text, show_alert=True)
+    
+@admin_router.callback_query(F.data.startswith("agent_stock:"), F.from_user.id.in_(ADMIN_IDS))
 async def show_agent_stock(callback: types.CallbackQuery):
-    """
-    Agentdagi har bir mahsulot qoldig'ini chiqaradi (yangi format, database.py funksiyasiga mos).
-    (FUNKSIYA ALMASHTIRILDI)
-    """
-    agent_name = callback.data.split(":")[1]
-    
-    # database.py dan List[Dict] formatida stok ma'lumotlarini olish
-    stock_data = await database.calculate_agent_stock(agent_name)
-    
-    if not stock_data:
-        text = f"**{agent_name}**da hozirda **stok qoldig'i yo'q**."
-        await callback.answer(text, show_alert=True)
-        return
+    """
+    Agentdagi har bir mahsulot qoldig'ini chiqaradi (yangi format, database.py funksiyasiga mos).
+    (FUNKSIYA ALMASHTIRILDI)
+    """
+    agent_name = callback.data.split(":")[1]
+    
+    # database.py dan List[Dict] formatida stok ma'lumotlarini olish
+    stock_data = await database.calculate_agent_stock(agent_name)
+    
+    if not stock_data:
+        text = f"**{agent_name}**da hozirda **stok qoldig'i yo'q**."
+        await callback.answer(text, show_alert=True)
+        return
 
-    # Ma'lumotlarni formatlash
-    total_balance = sum(item['balance_qty'] for item in stock_data)
-    
-    report_lines = []
-    
-    # 1. Sarlavha
-    report_lines.append(f"📦 **{agent_name}** dagi mahsulot qoldig'i:")
-    report_lines.append(f"**Jami Qoldiq:** {total_balance:,.1f} {DEFAULT_UNIT}\n")
-    
-    # 2. Mahsulotlar ro'yxati (Monospace)
-    report_lines.append("```")
-    report_lines.append("MAHSULOT NOMI       | QOLDIQ (KG)")
-    report_lines.append("--------------------|------------")
-    
-    max_name_len = 18 # Monospace ko'rinishi uchun
-    
-    for item in stock_data:
-        name = item['product_name']
-        balance = item['balance_qty']
-        
-        # Agar qoldiq 0 dan kichik bo'lsa (ortiqcha sotuv), uni ham ko'rsatish kerak.
-        if abs(balance) < 0.1 and balance != 0: 
-            continue # Kichik xatolarni o'tkazib yuborish
-            
-        # Mahsulot nomi uzun bo'lsa qisqartirish (Monospacega sig'ish uchun)
-        display_name = name
-        if len(name) > max_name_len:
-             display_name = name[:max_name_len-3] + "..."
-             
-        report_lines.append(
-            f"{display_name.ljust(max_name_len)} | {balance:,.1f}".rjust(12)
-        )
-        
-    report_lines.append("```")
-    
-    await callback.answer("\n".join(report_lines), show_alert=True)
+    # Ma'lumotlarni formatlash
+    total_balance = sum(item['balance_qty'] for item in stock_data)
+    
+    report_lines = []
+    
+    # 1. Sarlavha
+    report_lines.append(f"📦 **{agent_name}** dagi mahsulot qoldig'i:")
+    report_lines.append(f"**Jami Qoldiq:** {total_balance:,.1f} {DEFAULT_UNIT}\n")
+    
+    # 2. Mahsulotlar ro'yxati (Monospace)
+    report_lines.append("```")
+    report_lines.append("MAHSULOT NOMI       | QOLDIQ (KG)")
+    report_lines.append("--------------------|------------")
+    
+    max_name_len = 18 # Monospace ko'rinishi uchun
+    
+    for item in stock_data:
+        name = item['product_name']
+        balance = item['balance_qty']
+        
+        # Agar qoldiq 0 dan kichik bo'lsa (ortiqcha sotuv), uni ham ko'rsatish kerak.
+        if abs(balance) < 0.1 and balance != 0: 
+            continue # Kichik xatolarni o'tkazib yuborish
+            
+        # Mahsulot nomi uzun bo'lsa qisqartirish (Monospacega sig'ish uchun)
+        display_name = name
+        if len(name) > max_name_len:
+             display_name = name[:max_name_len-3] + "..."
+             
+        report_lines.append(
+            f"{display_name.ljust(max_name_len)} | {balance:,.1f}".rjust(12)
+        )
+        
+    report_lines.append("```")
+    
+    await callback.answer("\n".join(report_lines), show_alert=True)
 
 
-@admin_router.callback_query(F.data.startswith("agent_debt:"))
+@admin_router.callback_query(F.data.startswith("agent_debt:"), F.from_user.id.in_(ADMIN_IDS))
 async def show_agent_debt(callback: types.CallbackQuery):
-    """Agentning qarzdorlik/haqdorligini chiqaradi."""
-    agent_name = callback.data.split(":")[1]
-    debt, credit = await database.calculate_agent_debt(agent_name)
-    
-    if debt > 0:
-        text = f"**{agent_name}**ning jami qarzi: **{debt:,.0f} so'm**."
-    elif credit > 0:
-        text = f"**{agent_name}**da haqdorlik: **{credit:,.0f} so'm**."
-    else:
-        text = f"**{agent_name}**da qarzdorlik yo'q."
-        
-    await callback.answer(text, show_alert=True)
-    
+    """Agentning qarzdorlik/haqdorligini chiqaradi."""
+    agent_name = callback.data.split(":")[1]
+    debt, credit = await database.calculate_agent_debt(agent_name)
+    
+    if debt > 0:
+        text = f"**{agent_name}**ning jami qarzi: **{debt:,.0f} so'm**."
+    elif credit > 0:
+        text = f"**{agent_name}**da haqdorlik: **{credit:,.0f} so'm**."
+    else:
+        text = f"**{agent_name}**da qarzdorlik yo'q."
+        
+    await callback.answer(text, show_alert=True)
+    
 # 6.3.1 Sotuvchilar Parollari Ro'yxati (Monospace)
 
-@admin_router.callback_query(F.data == "list_agent_passwords")
+@admin_router.callback_query(F.data == "list_agent_passwords", F.from_user.id.in_(ADMIN_IDS))
 async def list_agent_passwords(callback: types.CallbackQuery):
-    """Agent parollarini Monospace formatda ko'rsatadi."""
-    agents = await database.get_all_agents()
-    if not agents:
-        await callback.message.answer("Hozirda sotuvchilar ro'yxati bo'sh.")
-        await callback.answer()
-        return
-        
-    # Monospace format uchun matnni yig'ish
-    max_len = max(len(a['agent_name']) for a in agents) if agents else 15
-    
-    text = "🔑 **Agentlar Parollari Ro'yxati:**\n\n"
-    text += "```\n"
-    text += "AGENT NOMI".ljust(max_len) + " | PAROL\n"
-    text += "-" * (max_len + 8) + "\n"
-    
-    for agent in agents:
-        text += f"{agent['agent_name'].ljust(max_len)} | {agent['password']}\n"
-    text += "```"
+    """Agent parollarini Monospace formatda ko'rsatadi."""
+    agents = await database.get_all_agents()
+    if not agents:
+        await callback.message.answer("Hozirda sotuvchilar ro'yxati bo'sh.")
+        await callback.answer()
+        return
+        
+    # Monospace format uchun matnni yig'ish
+    max_len = max(len(a['agent_name']) for a in agents) if agents else 15
+    
+    text = "🔑 **Agentlar Parollari Ro'yxati:**\n\n"
+    text += "```\n"
+    text += "AGENT NOMI".ljust(max_len) + " | PAROL\n"
+    text += "-" * (max_len + 8) + "\n"
+    
+    for agent in agents:
+        text += f"{agent['agent_name'].ljust(max_len)} | {agent['password']}\n"
+    text += "```"
 
-    await callback.message.edit_text(text, parse_mode="Markdown")
-    await callback.answer()
-    
+    await callback.message.edit_text(text, parse_mode="Markdown")
+    await callback.answer()
+    
 # --- 6.4 Sotuvchilardagi Mahsulotlar Ro'yxati (Agentlar kesimida) ---
 
-@admin_router.callback_query(F.data == "agent_stock_summary")
+@admin_router.callback_query(F.data == "agent_stock_summary", F.from_user.id.in_(ADMIN_IDS))
 async def list_all_agent_stocks(callback: types.CallbackQuery):
-    """Barcha agentlar ro'yxatini chiqarib, ulardagi stokni ko'rish imkonini beradi."""
-    agents = await database.get_all_agents()
-    if not agents:
-        await callback.message.edit_text("Hozirda sotuvchilar ro'yxati bo'sh.")
-        return
+    """Barcha agentlar ro'yxatini chiqarib, ulardagi stokni ko'rish imkonini beradi."""
+    agents = await database.get_all_agents()
+    if not agents:
+        await callback.message.edit_text("Hozirda sotuvchilar ro'yxati bo'sh.")
+        return
 
-    buttons = []
-    for agent in agents:
-        # agent_details funksiyasi orqali stok, qarz ko'riladi
-        buttons.append([types.InlineKeyboardButton(text=f"{agent['agent_name']} ({agent['region_mfy']})", callback_data=f"agent_details:{agent['agent_name']}")])
-        
-    await callback.message.edit_text("Mahsulot qoldig'ini ko'rish uchun Agentni tanlang:", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
-    await callback.answer()
+    buttons = []
+    for agent in agents:
+        # agent_details funksiyasi orqali stok, qarz ko'riladi
+        buttons.append([types.InlineKeyboardButton(text=f"{agent['agent_name']} ({agent['region_mfy']})", callback_data=f"agent_details:{agent['agent_name']}")])
+        
+    await callback.message.edit_text("Mahsulot qoldig'ini ko'rish uchun Agentni tanlang:", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
+    await callback.answer()
