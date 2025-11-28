@@ -98,7 +98,6 @@ async def process_login_password(message: Message, state: FSMContext):
         await message.answer("❌ Noto'g'ri parol. Qayta urinib ko'ring yoki /start bosing.")
 
 ## 💰 Balans va Statistika
----
 
 # ==============================================================================
 # IV. BALANS/STATISTIKANI KO'RISH (Batafsil Stok)
