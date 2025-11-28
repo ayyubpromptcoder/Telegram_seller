@@ -2,7 +2,6 @@
 
 import asyncpg
 import logging
-import pandas as pd  # E S K I: O'chiriladi
 import polars as pl  # Y A N G I: polars qo'shiladi
 import asyncio
 from functools import wraps
