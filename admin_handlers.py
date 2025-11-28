@@ -31,7 +31,7 @@ class AdminStates(StatesGroup):
     ADD_AGENT_PHONE = State()
     ADD_AGENT_PASSWORD = State()
 
-    # --- Tovar Berish (Stok kiritish) --- 👈 YANGI HOLATLAR
+    # --- Tovar Berish (Stok kiritish) --- 
     STOCK_AGENT_SELECT = State()
     STOCK_PRODUCT_SELECT = State()
     STOCK_QUANTITY_ENTER = State()
@@ -63,7 +63,6 @@ def get_mahsulot_keyboard() -> types.InlineKeyboardMarkup:
 
 def get_sotuvchi_keyboard() -> types.InlineKeyboardMarkup:
     """Sotuvchilar bo'limi uchun klaviatura"""
-    # 👈 Tovar Berish tugmasi qo'shildi
     return types.InlineKeyboardMarkup(
         inline_keyboard=[
             [types.InlineKeyboardButton(text="📥 Agentga Tovar Berish (Stock)", callback_data="start_stock_entry")],
@@ -95,29 +94,28 @@ async def cmd_sotuvchi(message: types.Message, state: FSMContext):
     """Sotuvchilar menyusiga kirish."""
     # FSM holatini tozalash muhim!
     await state.clear()
-    await message.answer("Sotuvchilar Boshqaruvi:", reply_markup=get_sotuvchi_keyboard())
     
-    # Admin asosiy menyu (Reply Keyboard)
+    # Admin asosiy menyu (Reply Keyboard) - Buyruqqa javob xabari sifatida yuboriladi
     keyboard = types.ReplyKeyboardMarkup(
         keyboard=[
             [types.KeyboardButton(text="/mahsulot"), types.KeyboardButton(text="/sotuvchi")],
-            # 👇 Faqat tugma nomi o'zgartirildi
             [types.KeyboardButton(text="📊 Oylik (31 kunlik) Savdo Hisoboti")] 
         ],
         resize_keyboard=True,
         one_time_keyboard=True
     )
     await message.answer("Siz Admin panelidasiz. Boshqaruv menyusini tanlang:", reply_markup=keyboard)
+    await message.answer("Sotuvchilar Boshqaruvi:", reply_markup=get_sotuvchi_keyboard())
 
 
-# 👇 Handle funksiyasida endi yangi tugma nomini tutamiz
+# Handle funksiyasida endi yangi tugma nomini tutamiz
 @admin_router.message(F.text == "📊 Oylik (31 kunlik) Savdo Hisoboti", F.from_user.id.in_(ADMIN_IDS))
 async def handle_monthly_sales_report(message: types.Message):
     """Oylik (31 kunlik) savdo hisobotini bazadan olib, monospace formatda chiqaradi."""
     
     await message.answer("Hisobot tayyorlanmoqda, iltimos kuting...")
     
-    # database.py dagi funksiyani chaqirish (Funksiya nomi o'zgarmadi)
+    # database.py dagi funksiyani chaqirish 
     report_text = await database.get_daily_sales_pivot_report()
     
     await message.answer(report_text, parse_mode="Markdown")
@@ -131,9 +129,9 @@ async def handle_monthly_sales_report(message: types.Message):
 @admin_router.callback_query(F.data == "add_new_product", F.from_user.id.in_(ADMIN_IDS))
 async def start_add_product(callback: types.CallbackQuery, state: FSMContext):
     """Yangi mahsulot nomini so'rashni boshlaydi."""
+    await callback.answer("Mahsulot kiritish boshlandi") # 👈 Tuzatish: Birinchi chaqiruv
     await callback.message.edit_text("Yangi mahsulot nomini kiriting:")
     await state.set_state(AdminStates.NEW_PRODUCT_NAME)
-    await callback.answer()
 
 @admin_router.message(AdminStates.NEW_PRODUCT_NAME)
 async def process_product_name(message: types.Message, state: FSMContext):
@@ -169,10 +167,12 @@ async def process_product_price(message: types.Message, state: FSMContext):
 @admin_router.callback_query(F.data == "list_products", F.from_user.id.in_(ADMIN_IDS))
 async def list_products(callback: types.CallbackQuery):
     """Barcha mahsulotlarni buttonlar sifatida ko'rsatadi."""
-    products = await database.get_all_products()
+    await callback.answer("Mahsulotlar yuklanmoqda...", show_alert=False) # 👈 Tuzatish: Birinchi chaqiruv
+    
+    products = await database.get_all_products() # 👈 DB operatsiyasi
+    
     if not products:
         await callback.message.edit_text("Hozirda mahsulotlar ro'yxati bo'sh.")
-        await callback.answer()
         return
 
     buttons = []
@@ -181,13 +181,15 @@ async def list_products(callback: types.CallbackQuery):
         buttons.append([types.InlineKeyboardButton(text=f"{p['name']} ({p['price']:,.0f} so'm)", callback_data=f"product_info:{p['name']}")])
     
     await callback.message.edit_text("Mahsulotni tanlang:", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
-    await callback.answer()
+
 
 @admin_router.callback_query(F.data.startswith("product_info:"), F.from_user.id.in_(ADMIN_IDS))
 async def show_product_info(callback: types.CallbackQuery, state: FSMContext):
     """Tanlangan mahsulot narxini ko'rsatadi va yangilash imkonini beradi."""
+    await callback.answer() # 👈 Tuzatish: Birinchi chaqiruv
+    
     product_name = callback.data.split(":")[1]
-    product = await database.get_product_info(product_name)
+    product = await database.get_product_info(product_name) # 👈 DB operatsiyasi
     
     if product:
         # FSM da mahsulot nomini saqlaymiz
@@ -204,22 +206,21 @@ async def show_product_info(callback: types.CallbackQuery, state: FSMContext):
         await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=keyboard)
     else:
         await callback.message.answer("Mahsulot topilmadi.")
-    await callback.answer()
 
 @admin_router.callback_query(F.data == "set_new_price_start", F.from_user.id.in_(ADMIN_IDS))
 async def start_set_new_price(callback: types.CallbackQuery, state: FSMContext):
     """Mahsulotning yangi narxini kiritish jarayonini boshlaydi."""
+    await callback.answer("Narxni yangilash boshlandi.") # 👈 Tuzatish: Birinchi chaqiruv
+
     data = await state.get_data()
     product_name = data.get('product_to_update')
     
     if not product_name:
         await callback.message.answer("⚠️ Avval mahsulotni tanlang.")
-        await callback.answer()
         return
     
     await callback.message.edit_text(f"**{product_name}** uchun yangi narxni (faqat raqamlarda) kiriting:", parse_mode="Markdown")
     await state.set_state(AdminStates.SET_NEW_PRICE)
-    await callback.answer()
 
 @admin_router.message(AdminStates.SET_NEW_PRICE)
 async def process_set_new_price(message: types.Message, state: FSMContext):
@@ -255,9 +256,11 @@ async def process_set_new_price(message: types.Message, state: FSMContext):
 @admin_router.callback_query(F.data == "add_new_agent_start", F.from_user.id.in_(ADMIN_IDS))
 async def start_add_agent(callback: types.CallbackQuery, state: FSMContext):
     """Agentning MFY/Region nomini so'rashni boshlaydi."""
+    await callback.answer("Agent qo'shish boshlandi") # 👈 Tuzatish: Birinchi chaqiruv
     await callback.message.edit_text("Agentning **MFY/Region** nomini kiriting:")
     await state.set_state(AdminStates.ADD_AGENT_REGION)
-    await callback.answer()
+
+# ... (process_agent_region, process_agent_name, process_agent_phone, process_agent_password funksiyalari o'zgarishsiz qoldi)
 
 @admin_router.message(AdminStates.ADD_AGENT_REGION)
 async def process_agent_region(message: types.Message, state: FSMContext):
@@ -310,6 +313,8 @@ async def process_agent_password(message: types.Message, state: FSMContext):
 @admin_router.callback_query(F.data == "list_all_agents_menu", F.from_user.id.in_(ADMIN_IDS))
 async def list_all_agents_menu(callback: types.CallbackQuery):
     """Sotuvchilar ro'yxatini ko'rish usullari menyusi."""
+    await callback.answer() # 👈 Tuzatish: Birinchi chaqiruv
+    
     keyboard = types.InlineKeyboardMarkup(
         inline_keyboard=[
             [types.InlineKeyboardButton(text="👥 Barcha Sotuvchilar (Alifbo)", callback_data="list_all_agents_alpha")],
@@ -318,50 +323,69 @@ async def list_all_agents_menu(callback: types.CallbackQuery):
         ]
     )
     await callback.message.edit_text("Sotuvchilar ro'yxati:", reply_markup=keyboard)
-    await callback.answer()
+
 
 # 6.2.1 Barcha Sotuvchilar (Alifbo tartibi)
 @admin_router.callback_query(F.data == "list_all_agents_alpha", F.from_user.id.in_(ADMIN_IDS))
 async def list_all_agents_alpha(callback: types.CallbackQuery):
     """Barcha agentlarni MFY va Ism bo'yicha tartiblab chiqaradi."""
-    agents = await database.get_all_agents()
+    await callback.answer("Agentlar ro'yxati yuklanmoqda...", show_alert=False) # 👈 Tuzatish: Birinchi chaqiruv
+    
+    agents = await database.get_all_agents() # 👈 DB operatsiyasi
+    
     if not agents:
-        await callback.message.answer("Hozirda sotuvchilar ro'yxati bo'sh.")
-        await callback.answer()
+        # callback.message.answer() o'rniga edit_text ishlatildi.
+        await callback.message.edit_text("Hozirda sotuvchilar ro'yxati bo'sh.", reply_markup=None) 
         return
     
     buttons = []
+    # Ortga tugmasi
+    buttons.append([types.InlineKeyboardButton(text="◀️ Ortga", callback_data="list_all_agents_menu")])
+
     for agent in agents:
         buttons.append([types.InlineKeyboardButton(text=f"{agent['agent_name']} ({agent['region_mfy']})", callback_data=f"agent_details:{agent['agent_name']}")])
         
     await callback.message.edit_text("Agentni tanlang (MFY / Ism bo'yicha tartiblangan):", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
-    await callback.answer()
+
 
 # 6.2.2 Sotuvchilar MFY bo'yicha
 @admin_router.callback_query(F.data == "list_agents_by_mfy", F.from_user.id.in_(ADMIN_IDS))
 async def list_agents_by_mfy(callback: types.CallbackQuery):
-    """Barcha mavjud MFYlarni buttonlar sifatida ko'rsatadi."""
-    agents = await database.get_all_agents()
+    """Barcha mavjud MFYlarni Inline tugmalar sifatida ko'rsatadi."""
+    
+    # CallbackQuery xatosini oldini olish uchun birinchi javob berish
+    await callback.answer("MFY ro'yxati yuklanmoqda...", show_alert=False) 
+    
+    agents = await database.get_all_agents() # 👈 DB operatsiyasi
+    
     if not agents:
-        await callback.message.answer("Hozirda sotuvchilar ro'yxati bo'sh.")
-        await callback.answer()
+        await callback.message.edit_text("Hozirda sotuvchilar ro'yxati bo'sh.", reply_markup=None)
         return
         
     # MFY ro'yxatini olish (takrorlanmas va tartiblangan)
     mfy_list = sorted(list(set(a['region_mfy'] for a in agents)))
     
     buttons = []
+    # Ortga tugmasi
+    buttons.append([types.InlineKeyboardButton(text="◀️ Ortga", callback_data="list_all_agents_menu")])
+
     for mfy in mfy_list:
+        # MFY bo'yicha tanlash
         buttons.append([types.InlineKeyboardButton(text=mfy, callback_data=f"mfy_select:{mfy}")])
         
+    # Xabarni o'zgartirish
     await callback.message.edit_text("MFYni tanlang:", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
-    await callback.answer()
+
 
 @admin_router.callback_query(F.data.startswith("mfy_select:"), F.from_user.id.in_(ADMIN_IDS))
 async def list_agents_in_mfy(callback: types.CallbackQuery):
-    """Tanlangan MFYdagi agentlarni chiqaradi."""
+    """Tanlangan MFYdagi agentlarni Inline tugmalar sifatida chiqaradi."""
+    
+    # CallbackQuery xatosini oldini olish uchun birinchi javob berish
     mfy_name = callback.data.split(":")[1]
-    agents = await database.get_all_agents()
+    await callback.answer(f"{mfy_name} agentlari yuklanmoqda...", show_alert=False)
+    
+    agents = await database.get_all_agents() # 👈 DB operatsiyasi
     
     mfy_agents = [a for a in agents if a['region_mfy'] == mfy_name]
     
@@ -369,16 +393,24 @@ async def list_agents_in_mfy(callback: types.CallbackQuery):
     for agent in mfy_agents:
         # Callback data: agent_details:{AgentNomi}
         buttons.append([types.InlineKeyboardButton(text=agent['agent_name'], callback_data=f"agent_details:{agent['agent_name']}")])
+    
+    # Ortga tugmasini qo'shish
+    buttons.append([types.InlineKeyboardButton(text="◀️ Ortga (MFYlar ro'yxati)", callback_data="list_agents_by_mfy")])
         
-    await callback.message.edit_text(f"**{mfy_name}** MFY agentlari:", parse_mode="Markdown", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
-    await callback.answer()
-
+    # Xabarni o'zgartirish
+    await callback.message.edit_text(
+        f"**{mfy_name}** MFY agentlari:", 
+        parse_mode="Markdown", 
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
 
 # --- 6.3 Agent ma'lumotlari (Stok, Qarz, Parol) ---
 
 @admin_router.callback_query(F.data.startswith("agent_details:"), F.from_user.id.in_(ADMIN_IDS))
 async def show_agent_details(callback: types.CallbackQuery):
     """Agent ma'lumotlarini ko'rish uchun menyuni ochadi."""
+    await callback.answer() # 👈 Tuzatish: Birinchi chaqiruv
+    
     agent_name = callback.data.split(":")[1]
     
     await callback.message.edit_text(
@@ -386,12 +418,12 @@ async def show_agent_details(callback: types.CallbackQuery):
         parse_mode="Markdown", 
         reply_markup=get_agent_management_buttons(agent_name)
     )
-    await callback.answer()
 
 
 @admin_router.callback_query(F.data.startswith("agent_pass:"), F.from_user.id.in_(ADMIN_IDS))
 async def show_agent_password(callback: types.CallbackQuery):
     """Agentning maxfiy parolini alert sifatida chiqaradi."""
+    # callback.answer() allaqachon show_alert=True bilan chaqirilgan. Bu to'g'ri.
     agent_name = callback.data.split(":")[1]
     agent = await database.get_agent_info(agent_name)
     
@@ -405,6 +437,8 @@ async def show_agent_password(callback: types.CallbackQuery):
 @admin_router.callback_query(F.data.startswith("agent_stock:"), F.from_user.id.in_(ADMIN_IDS))
 async def show_agent_stock(callback: types.CallbackQuery):
     """Agentdagi har bir mahsulot qoldig'ini chiqaradi."""
+    await callback.answer("Stok ma'lumotlari yuklanmoqda...", show_alert=False) # 👈 Tuzatish: Birinchi chaqiruv
+
     agent_name = callback.data.split(":")[1]
     
     # database.py dan List[Dict] formatida stok ma'lumotlarini olish
@@ -412,7 +446,7 @@ async def show_agent_stock(callback: types.CallbackQuery):
     
     if not stock_data:
         text = f"**{agent_name}**da hozirda **stok qoldig'i yo'q**."
-        await callback.answer(text, show_alert=True)
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=get_agent_management_buttons(agent_name))
         return
 
     # Ma'lumotlarni formatlash
@@ -426,19 +460,18 @@ async def show_agent_stock(callback: types.CallbackQuery):
     
     # 2. Mahsulotlar ro'yxati (Monospace)
     report_lines.append("```")
-    report_lines.append("MAHSULOT NOMI      | QOLDIQ (KG)")
+    report_lines.append("MAHSULOT NOMI       | QOLDIQ (KG)")
     report_lines.append("--------------------|------------")
     
     max_name_len = 18 # Monospace ko'rinishi uchun
     
-    for item in stock_data:
+    # Faqat 0 ga yaqin bo'lmagan qoldiqlar uchun
+    filtered_stock = [item for item in stock_data if abs(item['balance_qty']) >= 0.1 or item['balance_qty'] == 0]
+
+    for item in filtered_stock:
         name = item['product_name']
         balance = item['balance_qty']
         
-        # Agar qoldiq 0 ga yaqin bo'lsa (0.1 kg dan kichik), uni ko'rsatmaslik.
-        if abs(balance) < 0.1 and balance != 0: 
-            continue 
-            
         # Mahsulot nomi uzun bo'lsa qisqartirish (Monospacega sig'ish uchun)
         display_name = name
         if len(name) > max_name_len:
@@ -450,7 +483,7 @@ async def show_agent_stock(callback: types.CallbackQuery):
         report_lines.append(
             f"{display_name.ljust(max_name_len)} | {balance_str}"
         )
-        
+            
     report_lines.append("```")
     
     await callback.message.edit_text("\n".join(report_lines), parse_mode="Markdown", reply_markup=get_agent_management_buttons(agent_name))
@@ -459,6 +492,7 @@ async def show_agent_stock(callback: types.CallbackQuery):
 @admin_router.callback_query(F.data.startswith("agent_debt:"), F.from_user.id.in_(ADMIN_IDS))
 async def show_agent_debt(callback: types.CallbackQuery):
     """Agentning qarzdorlik/haqdorligini chiqaradi."""
+    # callback.answer() allaqachon show_alert=True bilan chaqirilgan. Bu to'g'ri.
     agent_name = callback.data.split(":")[1]
     debt, credit = await database.calculate_agent_debt(agent_name)
     
@@ -476,10 +510,11 @@ async def show_agent_debt(callback: types.CallbackQuery):
 @admin_router.callback_query(F.data == "list_agent_passwords", F.from_user.id.in_(ADMIN_IDS))
 async def list_agent_passwords(callback: types.CallbackQuery):
     """Agent parollarini Monospace formatda ko'rsatadi."""
+    await callback.answer("Parollar yuklanmoqda...", show_alert=False) # 👈 Tuzatish: Birinchi chaqiruv
+    
     agents = await database.get_all_agents()
     if not agents:
-        await callback.message.answer("Hozirda sotuvchilar ro'yxati bo'sh.")
-        await callback.answer()
+        await callback.message.edit_text("Hozirda sotuvchilar ro'yxati bo'sh.", reply_markup=None)
         return
         
     # Monospace format uchun matnni yig'ish
@@ -495,42 +530,50 @@ async def list_agent_passwords(callback: types.CallbackQuery):
     text += "```"
 
     await callback.message.edit_text(text, parse_mode="Markdown")
-    await callback.answer()
     
 # --- 6.4 Sotuvchilardagi Mahsulotlar Ro'yxati (Agentlar kesimida) ---
 
 @admin_router.callback_query(F.data == "agent_stock_summary", F.from_user.id.in_(ADMIN_IDS))
 async def list_all_agent_stocks(callback: types.CallbackQuery):
     """Barcha agentlar ro'yxatini chiqarib, ulardagi stokni ko'rish imkonini beradi."""
+    await callback.answer("Agentlar ro'yxati yuklanmoqda...", show_alert=False) # 👈 Tuzatish: Birinchi chaqiruv
+
     agents = await database.get_all_agents()
     if not agents:
-        await callback.message.edit_text("Hozirda sotuvchilar ro'yxati bo'sh.")
+        await callback.message.edit_text("Hozirda sotuvchilar ro'yxati bo'sh.", reply_markup=None)
         return
 
     buttons = []
+    # Ortga tugmasi
+    buttons.append([types.InlineKeyboardButton(text="◀️ Ortga", callback_data="list_all_agents_menu")])
+
     for agent in agents:
         # agent_details funksiyasi orqali stok, qarz ko'riladi
         buttons.append([types.InlineKeyboardButton(text=f"{agent['agent_name']} ({agent['region_mfy']})", callback_data=f"agent_details:{agent['agent_name']}")])
         
     await callback.message.edit_text("Mahsulot qoldig'ini ko'rish uchun Agentni tanlang:", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
-    await callback.answer()
+    
     
 # ==============================================================================
-# 📢 VII. AGENTGA TOVAR BERISH (STOCK KIRITISH) MANTIG'I (FSM) 👈 YENGI QISM
+# 📢 VII. AGENTGA TOVAR BERISH (STOCK KIRITISH) MANTIG'I (FSM) 
 # ==============================================================================
 
 @admin_router.callback_query(F.data == "start_stock_entry", F.from_user.id.in_(ADMIN_IDS))
 async def start_stock_entry(callback: types.CallbackQuery, state: FSMContext):
     """1-qadam: Tovar beriladigan agentni tanlash uchun ro'yxatni chiqaradi."""
+    await callback.answer("Tovar berish boshlandi") # 👈 Tuzatish: Birinchi chaqiruv
+    
     await state.clear()
     agents = await database.get_all_agents()
     
     if not agents:
         await callback.message.edit_text("Tovar berish uchun Agentlar ro'yxati bo'sh.")
-        await callback.answer()
         return
         
     buttons = []
+    # Ortga tugmasi
+    buttons.append([types.InlineKeyboardButton(text="◀️ Ortga", callback_data="sotuvchi")])
+
     for agent in agents:
         # Callback data: stock_select_agent:{AgentNomi}
         buttons.append([types.InlineKeyboardButton(text=f"{agent['agent_name']} ({agent['region_mfy']})", callback_data=f"stock_select_agent:{agent['agent_name']}")])
@@ -539,12 +582,14 @@ async def start_stock_entry(callback: types.CallbackQuery, state: FSMContext):
                                      parse_mode="Markdown", 
                                      reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
     
-    await state.set_state(AdminStates.STOCK_AGENT_SELECT) # Holatni Agent tanlashga o'rnatish
-    await callback.answer()
+    await state.set_state(AdminStates.STOCK_AGENT_SELECT) 
+
 
 @admin_router.callback_query(F.data.startswith("stock_select_agent:"), AdminStates.STOCK_AGENT_SELECT, F.from_user.id.in_(ADMIN_IDS))
 async def select_stock_product(callback: types.CallbackQuery, state: FSMContext):
     """2-qadam: Agent tanlandi. Tovar beriladigan mahsulotni tanlash uchun ro'yxatni chiqaradi."""
+    await callback.answer("Mahsulot ro'yxati yuklanmoqda...", show_alert=False) # 👈 Tuzatish: Birinchi chaqiruv
+    
     agent_name = callback.data.split(":")[1]
     
     # Tanlangan agentni FSM da saqlash
@@ -558,6 +603,9 @@ async def select_stock_product(callback: types.CallbackQuery, state: FSMContext)
         return
         
     buttons = []
+    # Ortga tugmasi (Agent tanlashga qaytadi)
+    buttons.append([types.InlineKeyboardButton(text="◀️ Ortga (Agent tanlash)", callback_data="start_stock_entry")])
+
     for p in products:
         # Callback data: stock_select_product:{MahsulotNomi}
         buttons.append([types.InlineKeyboardButton(text=f"{p['name']} ({p['price']:,.0f} so'm)", callback_data=f"stock_select_product:{p['name']}")])
@@ -566,13 +614,14 @@ async def select_stock_product(callback: types.CallbackQuery, state: FSMContext)
                                      parse_mode="Markdown", 
                                      reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
     
-    await state.set_state(AdminStates.STOCK_PRODUCT_SELECT) # Holatni Mahsulot tanlashga o'rnatish
-    await callback.answer()
+    await state.set_state(AdminStates.STOCK_PRODUCT_SELECT)
 
 
 @admin_router.callback_query(F.data.startswith("stock_select_product:"), AdminStates.STOCK_PRODUCT_SELECT, F.from_user.id.in_(ADMIN_IDS))
 async def enter_stock_quantity(callback: types.CallbackQuery, state: FSMContext):
     """3-qadam: Mahsulot tanlandi. Beriladigan miqdorni (KG) so'raydi."""
+    await callback.answer("Miqdor kiritish...") # 👈 Tuzatish: Birinchi chaqiruv
+    
     product_name = callback.data.split(":")[1]
     
     # Tanlangan mahsulotni FSM da saqlash
@@ -580,8 +629,7 @@ async def enter_stock_quantity(callback: types.CallbackQuery, state: FSMContext)
     
     await callback.message.edit_text(f"**{product_name}** mahsulotidan beriladigan **Miqdorni** (faqat raqamda, {DEFAULT_UNIT}) kiriting:")
     
-    await state.set_state(AdminStates.STOCK_QUANTITY_ENTER) # Holatni Miqdor kiritishga o'rnatish
-    await callback.answer()
+    await state.set_state(AdminStates.STOCK_QUANTITY_ENTER) 
 
 
 @admin_router.message(AdminStates.STOCK_QUANTITY_ENTER, F.from_user.id.in_(ADMIN_IDS))
@@ -605,7 +653,7 @@ async def enter_stock_issue_price(message: types.Message, state: FSMContext):
             parse_mode="Markdown"
         )
         
-        await state.set_state(AdminStates.STOCK_ISSUE_PRICE_ENTER) # Holatni Narx kiritishga o'rnatish
+        await state.set_state(AdminStates.STOCK_ISSUE_PRICE_ENTER) 
         
     except ValueError:
         await message.answer(f"Miqdor noto'g'ri kiritildi. Iltimos, musbat raqamda ({DEFAULT_UNIT}) kiriting.")
