@@ -87,7 +87,8 @@ async def handle_start(message: types.Message):
     keyboard = types.ReplyKeyboardMarkup(
         keyboard=[
             [types.KeyboardButton(text="/mahsulot"), types.KeyboardButton(text="/sotuvchi")],
-            [types.KeyboardButton(text="📊 Kunlik Savdo Hisoboti")]
+            # 👇 Faqat tugma nomi o'zgartirildi
+            [types.KeyboardButton(text="📊 Oylik (31 kunlik) Savdo Hisoboti")] 
         ],
         resize_keyboard=True,
         one_time_keyboard=True
@@ -95,26 +96,14 @@ async def handle_start(message: types.Message):
     await message.answer("Siz Admin panelidasiz. Boshqaruv menyusini tanlang:", reply_markup=keyboard)
 
 
-@admin_router.message(Command("mahsulot"), F.from_user.id.in_(ADMIN_IDS))
-async def handle_mahsulot_menu(message: types.Message):
-    """'Mahsulot' buyrug'iga ishlov berish."""
-    
-    await message.answer("Mahsulotlar bo'limi:", reply_markup=get_mahsulot_keyboard())
-
-
-@admin_router.message(Command("sotuvchi"), F.from_user.id.in_(ADMIN_IDS))
-async def handle_sotuvchi_menu(message: types.Message):
-    """'Sotuvchi' buyrug'iga ishlov berish."""
-    
-    await message.answer("Sotuvchilar bo'limi:", reply_markup=get_sotuvchi_keyboard())
-
-@admin_router.message(F.text == "📊 Kunlik Savdo Hisoboti", F.from_user.id.in_(ADMIN_IDS))
-async def handle_daily_sales_report(message: types.Message):
-    """Kunlik savdo hisobotini bazadan olib, monospace formatda chiqaradi."""
+# 👇 Handle funksiyasida endi yangi tugma nomini tutamiz
+@admin_router.message(F.text == "📊 Oylik (31 kunlik) Savdo Hisoboti", F.from_user.id.in_(ADMIN_IDS))
+async def handle_monthly_sales_report(message: types.Message):
+    """Oylik (31 kunlik) savdo hisobotini bazadan olib, monospace formatda chiqaradi."""
     
     await message.answer("Hisobot tayyorlanmoqda, iltimos kuting...")
     
-    # database.py dagi funksiyani chaqirish
+    # database.py dagi funksiyani chaqirish (Funksiya nomi o'zgarmadi)
     report_text = await database.get_daily_sales_pivot_report()
     
     await message.answer(report_text, parse_mode="Markdown")
