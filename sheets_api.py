@@ -37,24 +37,41 @@ def get_sheets_client():
 # ==============================================================================
 
 def get_or_create_monthly_sheet(spreadsheet: gspread.Spreadsheet) -> gspread.Worksheet:
-    """Joriy oy uchun (YYYY-MM) varaqni topadi yoki yaratadi."""
+    """
+    Joriy oy uchun varaqni topadi. 
+    Varaq nomi har doim joriy oyning 1-sanasini aks ettiradi (YYYY/MM/01).
+    """
     now = datetime.now()
-    month_name = now.strftime("%Y-%m")
+    
+    # Varaq nomi har doim joriy oyning 1-sanasini bildiradi.
+    first_day_of_month = now.replace(day=1)
+    sheet_title = first_day_of_month.strftime("%Y/%m/%d") 
+    # Natija har doim: YYYY/MM/01 (masalan, 2025/11/01)
     
     try:
-        worksheet = spreadsheet.worksheet(month_name)
-        logging.info(f"Varaq topildi: {month_name}")
+        # 1. Mavjud varaqni topishga urinish
+        worksheet = spreadsheet.worksheet(sheet_title)
+        logging.info(f"Varaq topildi: {sheet_title}")
         return worksheet
+        
     except gspread.WorksheetNotFound:
-        logging.info(f"Varaq topilmadi, {month_name} yaratilmoqda...")
-        worksheet = spreadsheet.add_worksheet(title=month_name, rows=1000, cols=15)
+        # 2. Varaq topilmasa, yaratish (Bu odatda Oyning 1-sanasida sodir bo'ladi, 
+        # yoki oldingi oy uchun yaratilmagan bo'lsa)
+        logging.info(f"Varaq topilmadi, {sheet_title} yaratilmoqda...")
+        
+        # Yangi varaqni yaratish
+        worksheet = spreadsheet.add_worksheet(title=sheet_title, rows=1000, cols=15)
+        
+        # Sarlavha qatorini qo'shish
         header = [
             "Sana (YYYY-MM-DD)", "Vaqt (HH:MM:SS)", "Agent_Ismi", "Mahsulot_Nomi", 
             "Miqdor_KG", "Savdo_Narxi", "Jami_Summa"
         ]
         worksheet.append_row(header)
-        logging.info(f"Yangi varaq {month_name} muvaffaqiyatli yaratildi.")
+        logging.info(f"Yangi varaq {sheet_title} muvaffaqiyatli yaratildi.")
+        
         return worksheet
+        
     except Exception as e:
         logging.error(f"Oylik varaq bilan ishlashda xato: {e}")
         return None
