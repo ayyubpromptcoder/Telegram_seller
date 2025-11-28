@@ -281,9 +281,9 @@ async def finish_sell(message: Message, state: FSMContext):
 # V. TO'LOV QABUL QILISH - FSM JARAYONI (YANGI BO'LIM)
 # ==============================================================================
 
-@seller_router.message(F.text == "💰 To'lov Qabul Qilish")
+@seller_router.message(F.text == "💸 To'lov Kiritish")
 async def start_debt_payment(message: Message, state: FSMContext):
-    """To'lov qabul qilish jarayonini boshlaydi."""
+    """To'lov kiritish jarayonini boshlaydi."""
     
     agent_data = await database.get_agent_by_telegram_id(message.from_user.id)
     if not agent_data:
