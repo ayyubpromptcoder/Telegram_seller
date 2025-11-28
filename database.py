@@ -2,13 +2,14 @@
 
 import asyncpg
 import logging
-import pandas as pd
-import asyncio 
-from functools import wraps 
-from config import DATABASE_URL # Ushbu fayl DATABASE_URL ni ta'minlashi kerak
-import sheets_api # Ushbu fayl Google Sheets bilan ishlash uchun sinxron funksiyalarni o'z ichiga oladi
+import pandas as pd  # E S K I: O'chiriladi
+import polars as pl  # Y A N G I: polars qo'shiladi
+import asyncio
+from functools import wraps
+from config import DATABASE_URL
+import sheets_api
 from typing import List, Dict, Tuple, Optional
-from datetime import datetime
+from datetime import datetime, timedelta # timedelta qo'shildi (7 kunlik hisobot uchun)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -435,14 +436,21 @@ async def add_sales_transaction(conn, agent_name: str, product_name: str, qty_kg
 
 # --- VI. KUNLIK SAVDO PIVOT HISOBOTI (Monospace) ---
 
+# database.py
+
+# --- VI. KUNLIK SAVDO PIVOT HISOBOTI (Monospace) ---
+
 @with_connection
 async def get_daily_sales_pivot_report(conn) -> Optional[str]:
     """
-    Kunlik savdo ma'lumotlarini bazadan oladi, Pandas yordamida pivot qiladi va Telegram uchun qulay monospace formatda chiqaradi.
-    Faqat oxirgi 7 kunlik ma'lumotni ko'rsatadi.
+    Kunlik savdo ma'lumotlarini bazadan oladi, Polars yordamida pivot qiladi va Telegram uchun qulay monospace formatda chiqaradi.
+    Faqat oxirgi 31 kunlik ma'lumotni ko'rsatadi.
     """
     try:
         # 1. Barcha sotuv va agent ma'lumotlarini olish
+        # [UZGARISH: 7 KUN O'RNIGA 31 KUNLIK MUDDAT BELGILANDI]
+        thirty_one_days_ago = (datetime.now() - timedelta(days=31)).strftime("%Y-%m-%d")
+        
         records = await conn.fetch("""
             SELECT
                 s.agent_name,
@@ -451,54 +459,67 @@ async def get_daily_sales_pivot_report(conn) -> Optional[str]:
                 s.sale_date
             FROM sales s
             JOIN agents a ON s.agent_name = a.agent_name
+            WHERE s.sale_date >= $1  
             ORDER BY s.sale_date DESC;
-        """)
-        
-        if not records: return "⚠️ Savdo ma'lumotlari topilmadi."
+        """, thirty_one_days_ago) # SQL filteri orqali tezlashtirish
 
-        # 2. Pandas DataFrame yaratish
-        df = pd.DataFrame([dict(r) for r in records])
+        if not records: return "⚠️ Savdo ma'lumotlari oxirgi 31 kun ichida topilmadi."
 
-        # 3. Ustunlarni tayyorlash va ma'lumot turlarini sozlash
-        df.rename(columns={'region_mfy': 'MFY_Nomi', 'agent_name': 'Agent_Ismi', 'qty_kg': 'Qty_KG'}, inplace=True)
-        df['Qty_KG'] = pd.to_numeric(df['Qty_KG'], errors='coerce').fillna(0)
-        # Sanani oy-kun formatiga o'tkazish
-        df['sale_date'] = pd.to_datetime(df['sale_date'], errors='coerce').dt.strftime('%m-%d')
+        # 2. Polars DataFrame yaratish
+        data = [dict(r) for r in records]
+        df = pl.DataFrame(data)
+
+        # 3. Ustunlarni qayta nomlash va ma'lumot turlarini sozlash
+        df = df.rename({'region_mfy': 'MFY_Nomi', 'agent_name': 'Agent_Ismi', 'qty_kg': 'Qty_KG'})
         
-        # 4. Pivot jadvalni yaratish: Index (Agentlar), Columns (Sanalar)
-        pivot_df = pd.pivot_table(
-            df, 
-            values='Qty_KG', 
-            index=['MFY_Nomi', 'Agent_Ismi'], 
-            columns='sale_date', 
-            aggfunc='sum', 
-            fill_value=0.0
+        df = df.with_columns(
+            pl.col('Qty_KG').cast(pl.Float64, strict=False).fill_null(0.0),
+            pl.col('sale_date').cast(pl.Date, strict=False)
         )
         
-        # 5. 'Jami Savdo' ustunini qo'shish
-        pivot_df['Jami_Savdo'] = pivot_df.sum(axis=1)
-
-        # 6. Tartiblash (MFY keyin Agent nomi bo'yicha)
-        pivot_df = pivot_df.sort_values(by=['MFY_Nomi', 'Agent_Ismi'], ascending=[True, True])
+        # Sanani 'MM-DD' formatiga o'tkazish uchun yangi ustun yaratish
+        df = df.with_columns(
+            pl.col('sale_date').dt.strftime('%m-%d').alias('Day_MMDD')
+        )
         
-        # 7. Ustunlarni tartibga keltirish (oxirgi 7 kun + Jami)
-        date_cols = [col for col in pivot_df.columns if col not in ['Jami_Savdo']]
-        date_cols.sort(reverse=True) # Sanalarni eng yangidan eng eskisiga qarab tartiblaymiz
-        date_cols = date_cols[:7] # Faqat so'nggi 7 kunlik ma'lumotni olish
-        date_cols.sort() # Keyin ularni eski sanadan yangi sanaga qarab tartiblaymiz
+        # 4. Pivot jadvalni yaratish (Polars Pivot usuli)
+        pivot_df = df.pivot(
+            index=['MFY_Nomi', 'Agent_Ismi'], 
+            columns='Day_MMDD', 
+            values='Qty_KG', 
+            aggregate_function='sum',
+            fill_value=0.0
+        ).collect() # eager() chaqiruviga o'xshash
+        
+        # 5. 'Jami Savdo' ustunini qo'shish
+        date_cols_temp = [col for col in pivot_df.columns if col not in ['MFY_Nomi', 'Agent_Ismi']]
+        
+        pivot_df = pivot_df.with_columns(
+            pl.sum_horizontal(pl.col(date_cols_temp)).alias('Jami_Savdo')
+        )
 
-        pivot_df = pivot_df.reset_index()
+        # 6. Tartiblash
+        pivot_df = pivot_df.sort(['MFY_Nomi', 'Agent_Ismi'], descending=[False, False])
+        
+        # 7. Ustunlarni tartibga keltirish (Barcha 31 kunlik ustunlar olinadi)
+        date_cols = [col for col in pivot_df.columns if col not in ['MFY_Nomi', 'Agent_Ismi', 'Jami_Savdo']]
+        date_cols.sort() # Eski sanadan yangi sanaga tartiblash
 
+        final_cols_order = ['MFY_Nomi', 'Agent_Ismi', 'Jami_Savdo'] + date_cols
+        pivot_df = pivot_df.select(final_cols_order)
+
+        data_rows = pivot_df.to_dict(as_series=False) 
+        
         # 8. Matnni Monospace formatida shakllantirish
         
-        # Ustun kengliklarini hisoblash (matnni bir tekisda chiqarish uchun)
+        # [UZGARISH: 31 KUN UCHUN QISQARTIRILGAN USTUN KENGILIKLARI]
         col_widths = {
-            'MFY_Nomi': max(pivot_df['MFY_Nomi'].astype(str).str.len().max() or 8, 8),
-            'Agent_Ismi': max(pivot_df['Agent_Ismi'].astype(str).str.len().max() or 12, 12),
-            'Jami_Savdo': 10 # 1234.5 kg format uchun
+            'MFY_Nomi': min(max(max(len(str(x)) for x in data_rows['MFY_Nomi']) if data_rows['MFY_Nomi'] else 8, 8), 10),
+            'Agent_Ismi': min(max(max(len(str(x)) for x in data_rows['Agent_Ismi']) if data_rows['Agent_Ismi'] else 12, 12), 15),
+            'Jami_Savdo': 8 
         }
         for col in date_cols:
-            col_widths[col] = 7 # Sanalar uchun (01-01)
+            col_widths[col] = 5 # Sanalar uchun 5 belgiga qisqartirildi (MM-DD)
         
         report_lines = []
         
@@ -506,7 +527,7 @@ async def get_daily_sales_pivot_report(conn) -> Optional[str]:
         header_line = ""
         header_line += "MFY NOMI".ljust(col_widths['MFY_Nomi']) + " | "
         header_line += "AGENT ISMI".ljust(col_widths['Agent_Ismi']) + " | "
-        header_line += "JAMI_KG".rjust(col_widths['Jami_Savdo'])
+        header_line += "JAMI".rjust(col_widths['Jami_Savdo'])
         
         for col in date_cols:
             header_line += " | " + col.center(col_widths[col])
@@ -518,41 +539,43 @@ async def get_daily_sales_pivot_report(conn) -> Optional[str]:
         report_lines.append(separator)
 
         # --- Ma'lumot Qatorlari ---
-        for index, row in pivot_df.iterrows():
+        for i in range(len(data_rows['MFY_Nomi'])):
             line = ""
-            line += str(row['MFY_Nomi']).ljust(col_widths['MFY_Nomi']) + " | "
-            line += str(row['Agent_Ismi']).ljust(col_widths['Agent_Ismi']) + " | "
+            mfy_name = data_rows['MFY_Nomi'][i]
+            agent_name = data_rows['Agent_Ismi'][i]
+            jami_savdo = data_rows['Jami_Savdo'][i]
+            
+            line += str(mfy_name).ljust(col_widths['MFY_Nomi']) + " | "
+            line += str(agent_name).ljust(col_widths['Agent_Ismi']) + " | "
             
             # Raqamni formatlash (1 o'nli kasr)
-            jami_savdo_kg = f"{row['Jami_Savdo']:.1f}"
-            line += jami_savdo_kg.rjust(col_widths['Jami_Savdo']) 
+            jami_savdo_kg = f"{jami_savdo:.1f}"
+            line += jami_savdo_kg.rjust(col_widths['Jami_Savdo'])
             
             for col in date_cols:
-                # Pivot jadvalda mavjud bo'lmagan ustunlar 0 bo'ladi
-                qty_val = f"{row.get(col, 0.0):.1f}"
-                line += " | " + qty_val.rjust(col_widths[col])
-                
+                qty_val = data_rows.get(col, [0.0] * len(data_rows['MFY_Nomi']))[i]
+                qty_val_formatted = f"{qty_val:.1f}"
+                line += " | " + qty_val_formatted.rjust(col_widths[col])
+                    
             report_lines.append(line)
 
         # --- Jami Yig'indi Qatori (Total Sum) ---
-        total_sum = pivot_df['Jami_Savdo'].sum()
+        total_sum = sum(data_rows['Jami_Savdo'])
         
         total_line = ""
         total_line += "Yig'indi".ljust(col_widths['MFY_Nomi']) + " | "
         total_line += "JAMI".ljust(col_widths['Agent_Ismi']) + " | "
         total_line += f"{total_sum:.1f}".rjust(col_widths['Jami_Savdo'])
         
-        # Yig'indi sanalar bo'yicha
         for col in date_cols:
-            # col mavjudligini tekshirish muhim
-            daily_sum = pivot_df.get(col, pd.Series([0])).sum()
+            daily_sum = sum(data_rows.get(col, [0.0] * len(data_rows['MFY_Nomi'])))
             total_line += " | " + f"{daily_sum:.1f}".rjust(col_widths[col])
             
         report_lines.append(separator)
         report_lines.append(total_line)
 
 
-        final_report = f"📊 **Kunlik Savdo Hisoboti** ({datetime.now().strftime('%Y-%m-%d')} holatiga):\n\n"
+        final_report = f"📊 **Oxirgi Oylik ({len(date_cols)} kunlik) Savdo Hisoboti** ({datetime.now().strftime('%Y-%m-%d')} holatiga):\n\n"
         final_report += "```\n"
         final_report += "\n".join(report_lines)
         final_report += "\n```"
@@ -560,5 +583,5 @@ async def get_daily_sales_pivot_report(conn) -> Optional[str]:
         return final_report
         
     except Exception as e:
-        logging.error(f"Pivot hisobotini yaratishda xato: {e}")
+        logging.error(f"Polars 31 kunlik Pivot hisobotini yaratishda xato: {e}")
         return f"⚠️ Hisobotni tayyorlashda ichki xato yuz berdi: {e}"
