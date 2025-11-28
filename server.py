@@ -124,14 +124,27 @@ async def on_startup(app: web.Application):
             logging.warning(f"Adminlarga xabar yuborishda xato yuz berdi: {e}")
 
 
+# server.py faylida
+# ... (Import qismini o'zgartirmang, 'import database' qolishi kerak)
+
 async def on_shutdown(app: web.Application):
     """Server to'xtaganda (bir marta) bajariladigan funksiya."""
     logging.warning('🛑 Server o\'chirilmoqda...')
-    # Webhookni o'chirib qo'yish
+    
+    # 1. Webhookni o'chirib qo'yish
     await bot.delete_webhook()
-    # Bot sessiyasini yopish
+    
+    # 2. DB ulanish havzasini yopish
+    # database.py dan DB_POOL global o'zgaruvchisini chaqirish
+    if database.DB_POOL:
+        await database.DB_POOL.close()
+        logging.info("PostgreSQL ulanish havzasi yopildi.")
+
+    # 3. Bot sessiyasini yopish
     await bot.session.close()
     logging.info("Bot sessiyasi yopildi va Webhook o'chirildi.")
+    
+# ...
 
 
 # ==============================================================================
