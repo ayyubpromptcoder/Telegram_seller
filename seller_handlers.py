@@ -1,26 +1,30 @@
+# ==============================================================================
 # seller_handlers.py fayli uchun tayyor kod
+# ==============================================================================
 
 # ==============================================================================
 # I. KERAKLI KUTUBXONALARNI IMPORT QILISH
 # ==============================================================================
 
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-import database
-import keyboards as kb
-from config import ADMIN_IDS, DEFAULT_UNIT # ADMIN_IDS va DEFAULT_UNIT bu yerda mavjud bo'lishi kerak
+# 'database' va 'keyboards' modullari loyihangizda mavjud bo'lishi kerak
+import database 
+import keyboards as kb 
+# 'config' faylida ADMIN_IDS (List[int]) va DEFAULT_UNIT (str) mavjud bo'lishi kerak
+from config import ADMIN_IDS, DEFAULT_UNIT 
 import logging
-from aiogram.types import ReplyKeyboardRemove
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# Router yaratish
 seller_router = Router()
 
 # ==============================================================================
-# I. FSM (Holat Mashinasi)
+# II. FSM (Holat Mashinasi)
 # ==============================================================================
 
 class SellState(StatesGroup):
@@ -33,23 +37,20 @@ class LoginState(StatesGroup):
     """Tizimga kirish holati"""
     waiting_for_password = State()
 
-class DebtState(StatesGroup):
-    """Qarzni qoplash (To'lov) holati"""
+class PaymentState(StatesGroup):
+    """To'lov (Agentning qarzini qoplashi) holati"""
     waiting_for_payment_amount = State()
     waiting_for_payment_comment = State()
     
 # ==============================================================================
-# II. TIZIMGA KIRISH / ASOSIY MENU (YANGILANGAN)
+# III. TIZIMGA KIRISH / ASOSIY MENU
 # ==============================================================================
 
-# Faqat ADMIN BO'LMAGAN foydalanuvchilar uchun ishlaydigan handler
-# Bu routerda ishlaydi, shuning uchun ~F.from_user.id.in_(ADMIN_IDS) talab qilinmaydi,
-# ammo xavfsizlik uchun qoldirilsa ham zarar qilmaydi.
+# Faqat Admin bo'lmagan foydalanuvchilar uchun
 @seller_router.message(CommandStart())
 @seller_router.message(F.text == "🔝 Asosiy Menu")
 async def cmd_start_seller(message: Message, state: FSMContext):
     """Botni ishga tushirish, Telegram ID orqali avtomatik login qilish."""
-    # Agar Admin bo'lsa, bu handler ishlamaydi (Chunki Bot Dispatcherida Admin routeri oldin turishi kerak)
     await state.clear()
     
     # 1. Telegram ID orqali agentni topish
@@ -58,7 +59,7 @@ async def cmd_start_seller(message: Message, state: FSMContext):
     if agent_data:
         # Agent topildi (avtomatik login)
         await message.answer(
-            f"Xush kelibsiz, **{agent_data['agent_name']}**! \nSizning MFY: **{agent_data['region_mfy']}**",
+            f"Xush kelibsiz, **{agent_data['agent_name']}**! \nSizning MFY: **{agent_data.get('region_mfy', '—')}**",
             reply_markup=kb.seller_main_kb,
             parse_mode="Markdown"
         )
@@ -97,21 +98,21 @@ async def process_login_password(message: Message, state: FSMContext):
         await message.answer("❌ Noto'g'ri parol. Qayta urinib ko'ring yoki /start bosing.")
 
 # ==============================================================================
-# III. BALANS/STATISTIKANI KO'RISH (YANGILANGAN - Batafsil Stok)
+# IV. BALANS/STATISTIKANI KO'RISH (Batafsil Stok)
 # ==============================================================================
 
 @seller_router.message(F.text == "💰 Balans & Statistika")
 async def show_seller_balance(message: Message):
     """Agentning stok va qarz holatini batafsil ko'rsatadi."""
     
-    # 1. Loginni tekshirish (Telegram ID orqali)
+    # 1. Loginni tekshirish
     agent_data = await database.get_agent_by_telegram_id(message.from_user.id)
     if not agent_data:
         return await message.answer("Siz tizimga kirmagansiz yoki agent sifatida ro'yxatdan o'tmagansiz. /start")
 
     agent_name = agent_data['agent_name']
     
-    # 2. Stok miqdorini hisoblash (List[Dict] qaytaradi)
+    # 2. Stok miqdorini hisoblash
     stock_data = await database.calculate_agent_stock(agent_name)
     
     # 3. Qarzni hisoblash
@@ -137,39 +138,39 @@ async def show_seller_balance(message: Message):
     report_parts.append(f"**Jami Qoldiq:** `{total_stock_balance:,.1f} {DEFAULT_UNIT}`\n")
     
     if stock_data:
-        report_parts.append("```")
-        report_parts.append("MAHSULOT NOMI           | QOLDIQ (KG)") # Eslatma: Tabulator o'rniga bo'shliqlar ishlatilgan
-        report_parts.append("--------------------|------------")
-        
-        max_name_len = 18
-        
-        for item in stock_data:
-            name = item['product_name']
-            balance = item['balance_qty']
+        # Faqat 0 ga yaqin bo'lmagan qoldiqlarni filtrlash
+        display_stock = [item for item in stock_data if abs(item['balance_qty']) >= 0.1 or item['balance_qty'] == 0]
+
+        if display_stock:
+            report_parts.append("```")
+            report_parts.append("MAHSULOT NOMI           | QOLDIQ (KG)")
+            report_parts.append("------------------------|------------")
             
-            display_name = name
-            if len(name) > max_name_len:
-                display_name = name[:max_name_len-3] + "..."
-                
-            # Agar qoldiq 0 ga yaqin bo'lsa (0.1 dan kichik) ko'rsatmaslik
-            # 0.1 dan kichik musbat va manfiy qoldiqlar yashiriladi (0 dan tashqari)
-            if abs(balance) < 0.1 and balance != 0: 
-                continue 
-                
-            # String formatlashda .ljust() bilan birga float formatlash uchun ehtiyotkor bo'lish kerak
-            balance_str = f"{balance:,.1f}"
+            max_name_len = 22 # Kod blokida to'g'ri ko'rinish uchun sozlandi
             
-            # Kiritilgan kodda .rjust(12) olib tashlangan, bu to'g'ri. Endi faqat ljust ishlatamiz:
-            report_parts.append(
-                f"{display_name.ljust(max_name_len)} | {balance_str}"
-            )
+            for item in display_stock:
+                name = item['product_name']
+                balance = item['balance_qty']
+                
+                display_name = name
+                if len(name) > max_name_len:
+                    display_name = name[:max_name_len-3] + "..."
+                    
+                balance_str = f"{balance:,.1f}".rjust(12) # Raqamlarni o'ng tomonga tekislash
+                
+                report_parts.append(
+                    f"{display_name.ljust(max_name_len)} | {balance_str}"
+                )
         
-        report_parts.append("```")
+            report_parts.append("```")
+        else:
+            report_parts.append("*Bazaga kiritilgan qoldiqli mahsulotlar yo'q.*")
+
 
     await message.answer("\n".join(report_parts), reply_markup=kb.seller_main_kb, parse_mode="Markdown")
 
 # ==============================================================================
-# IV. SAVDO KIRITISH - FSM JARAYONI
+# V. SAVDO KIRITISH - FSM JARAYONI
 # ==============================================================================
 
 @seller_router.message(F.text == "🛍️ Savdo Kiritish")
@@ -188,7 +189,7 @@ async def start_sell(message: Message, state: FSMContext):
     
     # Mahsulot tugmalarini yaratish
     product_buttons = [
-        [InlineKeyboardButton(text=f"{p['name']} ({p['price']:,.0f} UZS)", callback_data=f"sel_{p['name']}")]
+        [InlineKeyboardButton(text=f"{p['name']} ({p.get('price', 0):,.0f} UZS)", callback_data=f"sel_{p['name']}")]
         for p in products
     ]
     product_buttons.append([kb.cancel_btn])
@@ -200,7 +201,7 @@ async def start_sell(message: Message, state: FSMContext):
     )
     await state.set_state(SellState.waiting_for_product)
 
-# --- 4.1 Mahsulot Tanlandi ---
+# --- 5.1 Mahsulot Tanlandi ---
 @seller_router.callback_query(SellState.waiting_for_product, F.data.startswith("sel_"))
 async def select_quantity(callback: CallbackQuery, state: FSMContext):
     product_name = callback.data.split('_')[1]
@@ -216,7 +217,7 @@ async def select_quantity(callback: CallbackQuery, state: FSMContext):
     await state.set_state(SellState.waiting_for_quantity)
     await callback.answer()
 
-# --- 4.2 Miqdor Kiritildi ---
+# --- 5.2 Miqdor Kiritildi ---
 @seller_router.message(SellState.waiting_for_quantity)
 async def select_price(message: Message, state: FSMContext):
     try:
@@ -230,7 +231,7 @@ async def select_price(message: Message, state: FSMContext):
     
     # Mahsulotning standart narxini olish
     product_info = await database.get_product_info(product_name)
-    default_price = product_info['price'] if product_info else 0
+    default_price = product_info.get('price', 0) if product_info else 0
     
     await state.update_data(qty_kg=qty_kg)
     
@@ -243,7 +244,7 @@ async def select_price(message: Message, state: FSMContext):
     )
     await state.set_state(SellState.waiting_for_price)
 
-# --- 4.3 Narx Kiritildi (Yakuniy) ---
+# --- 5.3 Narx Kiritildi (Yakuniy) ---
 @seller_router.message(SellState.waiting_for_price)
 async def finish_sell(message: Message, state: FSMContext):
     try:
@@ -278,7 +279,7 @@ async def finish_sell(message: Message, state: FSMContext):
 
 
 # ==============================================================================
-# V. TO'LOV QABUL QILISH - FSM JARAYONI (YANGI BO'LIM)
+# VI. TO'LOV QABUL QILISH - FSM JARAYONI
 # ==============================================================================
 
 @seller_router.message(F.text == "💸 To'lov Kiritish")
@@ -297,9 +298,9 @@ async def start_debt_payment(message: Message, state: FSMContext):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[kb.cancel_btn]]),
         parse_mode="Markdown"
     )
-    await state.set_state(DebtState.waiting_for_payment_amount)
+    await state.set_state(PaymentState.waiting_for_payment_amount)
 
-@seller_router.message(DebtState.waiting_for_payment_amount)
+@seller_router.message(PaymentState.waiting_for_payment_amount)
 async def process_payment_amount(message: Message, state: FSMContext):
     """To'lov miqdorini qabul qilib, izohni so'raydi."""
     try:
@@ -316,9 +317,9 @@ async def process_payment_amount(message: Message, state: FSMContext):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[kb.cancel_btn]]),
         parse_mode="Markdown"
     )
-    await state.set_state(DebtState.waiting_for_payment_comment)
+    await state.set_state(PaymentState.waiting_for_payment_comment)
 
-@seller_router.message(DebtState.waiting_for_payment_comment)
+@seller_router.message(PaymentState.waiting_for_payment_comment)
 async def finish_debt_payment(message: Message, state: FSMContext):
     """Izohni qabul qilib, to'lovni bazaga kiritadi."""
     comment = message.text.strip()
@@ -346,7 +347,7 @@ async def finish_debt_payment(message: Message, state: FSMContext):
 
 
 # ==============================================================================
-# VI. BEKOR QILISH FUNKSIYASI (O'zgarmadi, lekin FSM holatlari ko'paydi)
+# VII. BEKOR QILISH FUNKSIYASI
 # ==============================================================================
 
 @seller_router.callback_query(F.data == "cancel_op")
@@ -356,6 +357,7 @@ async def cancel_handler(callback_or_message: [CallbackQuery, Message], state: F
     current_state = await state.get_state()
     if current_state is None:
         if isinstance(callback_or_message, CallbackQuery):
+            # Inline tugma bosilganda jarayon bo'lmasa, xabar qoldirish
             await callback_or_message.answer("Bekor qilinadigan jarayon yo'q.")
         return
 
@@ -364,17 +366,19 @@ async def cancel_handler(callback_or_message: [CallbackQuery, Message], state: F
     text = "❌ Amaliyot bekor qilindi."
     
     if isinstance(callback_or_message, CallbackQuery):
+        # CallbackQuery bo'lsa, xabarni tahrirlash va yangi xabar yuborish
         await callback_or_message.message.edit_text(text, reply_markup=None)
         await callback_or_message.message.answer("Asosiy menu:", reply_markup=kb.seller_main_kb)
         await callback_or_message.answer()
     else:
+        # Message bo'lsa, oddiy javob yuborish
         await callback_or_message.answer(text, reply_markup=kb.seller_main_kb)
 
-# seller_handlers.py faylining eng oxirida
-# Bu handler Adminlar uchun ishlamasligiga ishonch hosil qilish uchun, agar asosiy
-# dispatcherda admin_router birinchi navbatda qo'yilmagan bo'lsa,
-# bu yerda ham ~F.from_user.id.in_(ADMIN_IDS) filtrini ishlatish tavsiya etiladi.
+# ==============================================================================
+# VIII. BOSHQA XABARLARNI QAYTA ISHLASH (FALLBACK)
+# ==============================================================================
 
+# Faqat Admin BO'LMAGAN foydalanuvchilardan kelgan xabarlarga javob beradi
 @seller_router.message(~F.from_user.id.in_(ADMIN_IDS))
 async def handle_all_other_messages(message: Message, state: FSMContext):
     """
@@ -389,4 +393,4 @@ async def handle_all_other_messages(message: Message, state: FSMContext):
     else:
         # Oddiy start/menyuga tushmagan bo'lsa
         await message.answer("Sizni tushunmadim. Iltimos, /start buyrug'ini bosing yoki menudan tanlang.", 
-                             reply_markup=kb.seller_main_kb)
+                              reply_markup=kb.seller_main_kb)
