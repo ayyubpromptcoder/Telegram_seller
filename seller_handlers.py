@@ -24,10 +24,10 @@ seller_router = Router()
 # ==============================================================================
 
 class SellState(StatesGroup):
-    """Savdo kiritish uchun holatlar"""
-    waiting_for_product = State()
-    waiting_for_quantity = State()
-    waiting_for_price = State()
+    """Savdo kiritish uchun holatlar"""
+    waiting_for_product = State()
+    waiting_for_quantity = State()
+    waiting_for_price = State()
 
 class LoginState(StatesGroup):
     """Tizimga kirish holati"""
