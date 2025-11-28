@@ -82,6 +82,20 @@ def get_sotuvchi_keyboard() -> types.InlineKeyboardMarkup:
 @admin_router.message(Command("admin_menu"), F.from_user.id.in_(ADMIN_IDS))
 async def handle_start(message: types.Message):
     """Adminlar uchun start buyrug'i va asosiy menu."""
+
+@admin_router.message(Command("mahsulot"), F.from_user.id.in_(ADMIN_IDS))
+async def cmd_mahsulot(message: types.Message, state: FSMContext):
+    """Mahsulotlar menyusiga kirish."""
+    # FSM holatini tozalash muhim!
+    await state.clear() 
+    await message.answer("Mahsulotlar Boshqaruvi:", reply_markup=get_mahsulot_keyboard())
+
+@admin_router.message(Command("sotuvchi"), F.from_user.id.in_(ADMIN_IDS))
+async def cmd_sotuvchi(message: types.Message, state: FSMContext):
+    """Sotuvchilar menyusiga kirish."""
+    # FSM holatini tozalash muhim!
+    await state.clear()
+    await message.answer("Sotuvchilar Boshqaruvi:", reply_markup=get_sotuvchi_keyboard())
     
     # Admin asosiy menyu (Reply Keyboard)
     keyboard = types.ReplyKeyboardMarkup(
