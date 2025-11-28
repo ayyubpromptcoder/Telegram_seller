@@ -1,8 +1,4 @@
 # ==============================================================================
-# seller_handlers.py fayli uchun tayyor kod
-# ==============================================================================
-
-# ==============================================================================
 # I. KERAKLI KUTUBXONALARNI IMPORT QILISH
 # ==============================================================================
 
@@ -11,10 +7,10 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-# 'database' va 'keyboards' modullari loyihangizda mavjud bo'lishi kerak
+# TelegramBadRequest xatoligini qo'shish (callback.message.edit_text ishlatilganda kerak bo'lishi mumkin)
+from aiogram.exceptions import TelegramBadRequest 
 import database 
 import keyboards as kb 
-# 'config' faylida ADMIN_IDS (List[int]) va DEFAULT_UNIT (str) mavjud bo'lishi kerak
 from config import ADMIN_IDS, DEFAULT_UNIT 
 import logging
 
@@ -65,6 +61,10 @@ async def cmd_start_seller(message: Message, state: FSMContext):
         )
     else:
         # Agent topilmadi (login paroli so'rash)
+        # Agar bu Admin bo'lsa, o'zini tanitishga majbur qilmaslik uchun tekshiruv kiritildi:
+        if message.from_user.id in ADMIN_IDS:
+             return await message.answer("Siz Admin paneldasiz. /admin_menu buyrug'ini bosing.", reply_markup=ReplyKeyboardRemove())
+
         await message.answer(
             "Xush kelibsiz! Botdan foydalanish uchun sizga **agent paroli** kerak.\n"
             "Parolingizni kiriting. (Bu sizning Telegram ID'ingizga bog'lanadi)",
@@ -97,6 +97,9 @@ async def process_login_password(message: Message, state: FSMContext):
     else:
         await message.answer("❌ Noto'g'ri parol. Qayta urinib ko'ring yoki /start bosing.")
 
+## 💰 Balans va Statistika
+---
+
 # ==============================================================================
 # IV. BALANS/STATISTIKANI KO'RISH (Batafsil Stok)
 # ==============================================================================
@@ -113,6 +116,9 @@ async def show_seller_balance(message: Message):
     agent_name = agent_data['agent_name']
     
     # 2. Stok miqdorini hisoblash
+    # Ushbu funksiya uzoq ishlashi mumkin, shuning uchun yuklanmoqda xabarini berish maqsadga muvofiq
+    sent_message = await message.answer("Hisob-kitoblar tayyorlanmoqda, iltimos kuting...")
+
     stock_data = await database.calculate_agent_stock(agent_name)
     
     # 3. Qarzni hisoblash
@@ -143,10 +149,10 @@ async def show_seller_balance(message: Message):
 
         if display_stock:
             report_parts.append("```")
-            report_parts.append("MAHSULOT NOMI           | QOLDIQ (KG)")
+            report_parts.append("MAHSULOT NOMI            | QOLDIQ (KG)")
             report_parts.append("------------------------|------------")
             
-            max_name_len = 22 # Kod blokida to'g'ri ko'rinish uchun sozlandi
+            max_name_len = 24 # Kod blokida to'g'ri ko'rinish uchun sozlandi (yuqorida 22 edi)
             
             for item in display_stock:
                 name = item['product_name']
@@ -167,7 +173,21 @@ async def show_seller_balance(message: Message):
             report_parts.append("*Bazaga kiritilgan qoldiqli mahsulotlar yo'q.*")
 
 
-    await message.answer("\n".join(report_parts), reply_markup=kb.seller_main_kb, parse_mode="Markdown")
+    try:
+        # Oldingi "yuklanmoqda" xabarini tahrirlash
+        await sent_message.edit_text(
+            "\n".join(report_parts), 
+            reply_markup=kb.seller_main_kb, 
+            parse_mode="Markdown"
+        )
+    except TelegramBadRequest as e:
+        # Xabar tahrirlanmasa (masalan, o'zgartirilmagan bo'lsa)
+        logging.info(f"Balans xabari tahrirlanmadi: {e}")
+        # Shunchaki yuborib qo'yish
+        await message.answer("\n".join(report_parts), reply_markup=kb.seller_main_kb, parse_mode="Markdown")
+
+## 🛍️ Savdo Kiritish
+---
 
 # ==============================================================================
 # V. SAVDO KIRITISH - FSM JARAYONI
@@ -208,12 +228,21 @@ async def select_quantity(callback: CallbackQuery, state: FSMContext):
     
     await state.update_data(product_name=product_name)
     
-    await callback.message.edit_text(
-        f"Mahsulot: **{product_name}**\n\n"
-        f"Sotilgan **miqdorni** ({DEFAULT_UNIT}) kiriting:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[kb.cancel_btn]]),
-        parse_mode="Markdown"
-    )
+    try:
+        await callback.message.edit_text(
+            f"Mahsulot: **{product_name}**\n\n"
+            f"Sotilgan **miqdorni** ({DEFAULT_UNIT}) kiriting:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[kb.cancel_btn]]),
+            parse_mode="Markdown"
+        )
+    except TelegramBadRequest:
+        # Xabar tahrirlanmasa (masalan, oldingi xabar yangilangan bo'lsa), yangi xabar yuborish
+        await callback.message.answer(
+            f"Mahsulot: **{product_name}**\n\nSotilgan **miqdorni** ({DEFAULT_UNIT}) kiriting:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[kb.cancel_btn]]),
+            parse_mode="Markdown"
+        )
+        
     await state.set_state(SellState.waiting_for_quantity)
     await callback.answer()
 
@@ -221,10 +250,11 @@ async def select_quantity(callback: CallbackQuery, state: FSMContext):
 @seller_router.message(SellState.waiting_for_quantity)
 async def select_price(message: Message, state: FSMContext):
     try:
-        qty_kg = float(message.text.replace(',', '.').strip())
+        # Nuqta va vergulni qabul qilish uchun .replace(',', '.') ishlatilgan, yaxshi!
+        qty_kg = float(message.text.replace(',', '.').strip()) 
         if qty_kg <= 0: raise ValueError
     except ValueError:
-        return await message.answer("Miqdor noto'g'ri kiritildi. Iltimos, musbat raqam kiriting (masalan: 10.5):")
+        return await message.answer("Miqdor noto'g'ri kiritildi. Iltimos, **musbat raqam** kiriting (masalan: 10.5):")
         
     data = await state.get_data()
     product_name = data['product_name']
@@ -251,7 +281,7 @@ async def finish_sell(message: Message, state: FSMContext):
         sale_price = float(message.text.replace(',', '.').strip())
         if sale_price <= 0: raise ValueError
     except ValueError:
-        return await message.answer("Narx noto'g'ri kiritildi. Iltimos, musbat raqam kiriting (masalan: 7500):")
+        return await message.answer("Narx noto'g'ri kiritildi. Iltimos, **musbat raqam** kiriting (masalan: 7500):")
     
     data = await state.get_data()
     agent_name = data['agent_name']
@@ -260,6 +290,8 @@ async def finish_sell(message: Message, state: FSMContext):
     
     # Savdoni bazaga kiritish
     success = await database.add_sales_transaction(agent_name, product_name, qty_kg, sale_price)
+    
+    await state.clear() # Muhim: Clear oldinroq bo'lishi kerak.
     
     if success:
         total_amount = qty_kg * sale_price
@@ -275,8 +307,9 @@ async def finish_sell(message: Message, state: FSMContext):
     else:
         await message.answer("❌ Savdoni bazaga kiritishda xato yuz berdi. Iltimos, qayta urinib ko'ring.", reply_markup=kb.seller_main_kb)
         
-    await state.clear()
 
+## 💸 To'lov Kiritish
+---
 
 # ==============================================================================
 # VI. TO'LOV QABUL QILISH - FSM JARAYONI
@@ -304,10 +337,11 @@ async def start_debt_payment(message: Message, state: FSMContext):
 async def process_payment_amount(message: Message, state: FSMContext):
     """To'lov miqdorini qabul qilib, izohni so'raydi."""
     try:
-        amount = int(message.text.strip())
+        # To'lov pul bo'lgani uchun int(message.text.strip()) o'rinli.
+        amount = int(message.text.strip()) 
         if amount <= 0: raise ValueError
     except ValueError:
-        return await message.answer("Miqdor noto'g'ri kiritildi. Iltimos, musbat butun raqam kiriting (masalan: 1000000):")
+        return await message.answer("Miqdor noto'g'ri kiritildi. Iltimos, **musbat butun raqam** kiriting (masalan: 1000000):")
         
     await state.update_data(payment_amount=amount)
     
@@ -331,6 +365,8 @@ async def finish_debt_payment(message: Message, state: FSMContext):
     # To'lovni bazaga kiritish (is_payment=True bilan qoplash sifatida)
     success = await database.add_debt_payment(agent_name, amount, comment, is_payment=True)
     
+    await state.clear() # Muhim: Clear!
+
     if success:
         await message.answer(
             "✅ **To'lov muvaffaqiyatli qabul qilindi!**\n\n"
@@ -343,8 +379,9 @@ async def finish_debt_payment(message: Message, state: FSMContext):
     else:
         await message.answer("❌ To'lovni bazaga kiritishda xato yuz berdi. Iltimos, qayta urinib ko'ring.", reply_markup=kb.seller_main_kb)
         
-    await state.clear()
 
+## ❌ Bekor Qilish & Fallback
+---
 
 # ==============================================================================
 # VII. BEKOR QILISH FUNKSIYASI
@@ -355,10 +392,13 @@ async def finish_debt_payment(message: Message, state: FSMContext):
 async def cancel_handler(callback_or_message: [CallbackQuery, Message], state: FSMContext):
     """Joriy FSM jarayonini bekor qiladi."""
     current_state = await state.get_state()
+    
     if current_state is None:
         if isinstance(callback_or_message, CallbackQuery):
             # Inline tugma bosilganda jarayon bo'lmasa, xabar qoldirish
             await callback_or_message.answer("Bekor qilinadigan jarayon yo'q.")
+        elif isinstance(callback_or_message, Message):
+            await callback_or_message.answer("Bekor qilinadigan jarayon yo'q.", reply_markup=kb.seller_main_kb)
         return
 
     await state.clear()
@@ -367,7 +407,11 @@ async def cancel_handler(callback_or_message: [CallbackQuery, Message], state: F
     
     if isinstance(callback_or_message, CallbackQuery):
         # CallbackQuery bo'lsa, xabarni tahrirlash va yangi xabar yuborish
-        await callback_or_message.message.edit_text(text, reply_markup=None)
+        try:
+            await callback_or_message.message.edit_text(text, reply_markup=None)
+        except TelegramBadRequest:
+            await callback_or_message.message.answer(text, reply_markup=kb.seller_main_kb)
+        
         await callback_or_message.message.answer("Asosiy menu:", reply_markup=kb.seller_main_kb)
         await callback_or_message.answer()
     else:
@@ -379,6 +423,7 @@ async def cancel_handler(callback_or_message: [CallbackQuery, Message], state: F
 # ==============================================================================
 
 # Faqat Admin BO'LMAGAN foydalanuvchilardan kelgan xabarlarga javob beradi
+# Eslatma: Bu yerda ~F.from_user.id.in_(ADMIN_IDS) filtri bor, shuning uchun bu agentlarga tegishli.
 @seller_router.message(~F.from_user.id.in_(ADMIN_IDS))
 async def handle_all_other_messages(message: Message, state: FSMContext):
     """
@@ -393,4 +438,4 @@ async def handle_all_other_messages(message: Message, state: FSMContext):
     else:
         # Oddiy start/menyuga tushmagan bo'lsa
         await message.answer("Sizni tushunmadim. Iltimos, /start buyrug'ini bosing yoki menudan tanlang.", 
-                              reply_markup=kb.seller_main_kb)
+                             reply_markup=kb.seller_main_kb)
