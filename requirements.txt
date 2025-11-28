@@ -2,7 +2,7 @@
 aiogram==3.10.0
 
 # Asinxron PostgreSQL drayveri
-asyncpg==0.28.0
+asyncpg==0.31.0
 
 # .env fayllaridan sozlamalarni yuklash
 python-dotenv==1.0.0
