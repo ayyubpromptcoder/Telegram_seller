@@ -97,8 +97,9 @@ async def process_login_password(message: Message, state: FSMContext):
     else:
         await message.answer("❌ Noto'g'ri parol. Qayta urinib ko'ring yoki /start bosing.")
 
-## 💰 Balans va Statistika
-
+# Tuzatilgan: Sarlavha ajratuvchisini izohga o'tkazish
+# 💰 Balans va Statistika 
+# --- 
 # ==============================================================================
 # IV. BALANS/STATISTIKANI KO'RISH (Batafsil Stok)
 # ==============================================================================
@@ -148,7 +149,8 @@ async def show_seller_balance(message: Message):
 
         if display_stock:
             report_parts.append("```")
-            report_parts.append("MAHSULOT NOMI            | QOLDIQ (KG)")
+            # Qator ustunlarini to'g'ri ajratish uchun bo'sh joylar tuzatildi
+            report_parts.append("MAHSULOT NOMI             | QOLDIQ (KG)") 
             report_parts.append("------------------------|------------")
             
             max_name_len = 24 # Kod blokida to'g'ri ko'rinish uchun sozlandi (yuqorida 22 edi)
@@ -185,9 +187,9 @@ async def show_seller_balance(message: Message):
         # Shunchaki yuborib qo'yish
         await message.answer("\n".join(report_parts), reply_markup=kb.seller_main_kb, parse_mode="Markdown")
 
-## 🛍️ Savdo Kiritish
----
-
+# Tuzatilgan: Sarlavha ajratuvchisini izohga o'tkazish
+# 🛍️ Savdo Kiritish 
+# --- 
 # ==============================================================================
 # V. SAVDO KIRITISH - FSM JARAYONI
 # ==============================================================================
@@ -307,9 +309,9 @@ async def finish_sell(message: Message, state: FSMContext):
         await message.answer("❌ Savdoni bazaga kiritishda xato yuz berdi. Iltimos, qayta urinib ko'ring.", reply_markup=kb.seller_main_kb)
         
 
-## 💸 To'lov Kiritish
----
-
+# Tuzatilgan: Sarlavha ajratuvchisini izohga o'tkazish
+# 💸 To'lov Kiritish 
+# --- 
 # ==============================================================================
 # VI. TO'LOV QABUL QILISH - FSM JARAYONI
 # ==============================================================================
@@ -378,10 +380,9 @@ async def finish_debt_payment(message: Message, state: FSMContext):
     else:
         await message.answer("❌ To'lovni bazaga kiritishda xato yuz berdi. Iltimos, qayta urinib ko'ring.", reply_markup=kb.seller_main_kb)
         
-
-## ❌ Bekor Qilish & Fallback
----
-
+# Tuzatilgan: Sarlavha ajratuvchisini izohga o'tkazish
+# ❌ Bekor Qilish & Fallback 
+# --- 
 # ==============================================================================
 # VII. BEKOR QILISH FUNKSIYASI
 # ==============================================================================
