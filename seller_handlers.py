@@ -150,7 +150,7 @@ async def show_seller_balance(message: Message):
         if display_stock:
             report_parts.append("```")
             # Qator ustunlarini to'g'ri ajratish uchun bo'sh joylar tuzatildi
-            report_parts.append("MAHSULOT NOMI             | QOLDIQ (KG)") 
+            report_parts.append("MAHSULOT NOMI              | QOLDIQ (KG)") 
             report_parts.append("------------------------|------------")
             
             max_name_len = 24 # Kod blokida to'g'ri ko'rinish uchun sozlandi (yuqorida 22 edi)
@@ -178,9 +178,12 @@ async def show_seller_balance(message: Message):
         # Oldingi "yuklanmoqda" xabarini tahrirlash
         await sent_message.edit_text(
             "\n".join(report_parts), 
-            reply_markup=kb.seller_main_kb, 
+            # reply_markup=kb.seller_main_kb, # <-- AIOGRAM 3.X XATOSI TUZATILDI
             parse_mode="Markdown"
         )
+        # Klaviatura faqat Message orqali yuborilishi kerak
+        await message.answer("Asosiy menu:", reply_markup=kb.seller_main_kb)
+        
     except TelegramBadRequest as e:
         # Xabar tahrirlanmasa (masalan, o'zgartirilmagan bo'lsa)
         logging.info(f"Balans xabari tahrirlanmadi: {e}")
@@ -422,7 +425,7 @@ async def cancel_handler(callback_or_message: [CallbackQuery, Message], state: F
 # VIII. BOSHQA XABARLARNI QAYTA ISHLASH (FALLBACK)
 # ==============================================================================
 
-# Faqat Admin BO'LMAGAN foydalanuvchilardan kelgan xabarlarga javob beradi
+# Faqat Admin BO'LMAGAN foydalanuvchilaridan kelgan xabarlarga javob beradi
 # Eslatma: Bu yerda ~F.from_user.id.in_(ADMIN_IDS) filtri bor, shuning uchun bu agentlarga tegishli.
 @seller_router.message(~F.from_user.id.in_(ADMIN_IDS))
 async def handle_all_other_messages(message: Message, state: FSMContext):
