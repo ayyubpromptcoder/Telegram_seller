@@ -1,13 +1,12 @@
 import asyncpg
 import logging
-import polars as pl # Y A N G I: polars qo'shiladi
+import polars as pl
 import asyncio
 from functools import wraps
 from config import DATABASE_URL
 import sheets_api
 from typing import List, Dict, Tuple, Optional
-# datetime kutubxonalarini import qilish
-from datetime import datetime, timedelta, date # date qo'shildi
+from datetime import datetime, timedelta, date
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -310,7 +309,7 @@ async def calculate_agent_stock(conn, agent_name: str) -> List[Dict]:
                 COALESCE(si.total_received, 0) - COALESCE(so.total_sold, 0) AS balance_qty
             FROM products p
             LEFT JOIN StockIn si ON p.name = si.product_name
-            LEFT JOIN SalesOut so ON p.name = so.product_JOIN product_name
+            LEFT JOIN SalesOut so ON p.name = so.product_name -- <<< XATO TUZATILDI
             -- Agentga berilgan yoki sotilgan mahsulotlarni filtrlaymiz
             WHERE COALESCE(si.total_received, 0) > 0 OR COALESCE(so.total_sold, 0) > 0
             ORDER BY p.name ASC;
@@ -391,7 +390,7 @@ async def add_debt_payment(conn, agent_name: str, amount: float, comment: str, i
     # Agar bu Qoplash (Payment) bo'lsa, summa manfiy qilinadi (qarzdorlikni kamaytiradi)
     final_amount = -amount if is_payment else amount 
     txn_type = "Qoplash" if is_payment else "Avans"
-    # ❌ XATO TUZATILDI: SQL ga DATE tipida uzatish uchun .date() ishlatildi.
+    # SQL ga DATE tipida uzatish uchun .date() ishlatildi.
     txn_date = datetime.now().date() 
     
     try:
@@ -417,7 +416,7 @@ async def add_sales_transaction(conn, agent_name: str, product_name: str, qty_kg
 
     total_amount = qty_kg * sale_price
     now = datetime.now()
-    # ❌ XATO TUZATILDI: SQL ga DATE tipida uzatish uchun .date() ishlatildi.
+    # SQL ga DATE tipida uzatish uchun .date() ishlatildi.
     sale_date = now.date()
     sale_time = now.time() # TIME uchun
     
@@ -440,10 +439,6 @@ async def add_sales_transaction(conn, agent_name: str, product_name: str, qty_kg
 
 # --- VI. KUNLIK SAVDO PIVOT HISOBOTI (Monospace) ---
 
-# database.py
-
-# --- VI. KUNLIK SAVDO PIVOT HISOBOTI (Monospace) ---
-
 @with_connection
 async def get_daily_sales_pivot_report(conn) -> Optional[str]:
     """
@@ -452,7 +447,7 @@ async def get_daily_sales_pivot_report(conn) -> Optional[str]:
     """
     try:
         # 1. Barcha sotuv va agent ma'lumotlarini olish
-        # ❌ XATO TUZATILDI: PostgreSQL ga uzatishdan oldin .date() ishlatildi.
+        # PostgreSQL ga uzatishdan oldin .date() ishlatildi.
         thirty_one_days_ago = (datetime.now() - timedelta(days=31)).date()
         
         records = await conn.fetch("""
