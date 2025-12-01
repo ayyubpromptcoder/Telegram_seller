@@ -1,14 +1,13 @@
-#database.py fayli
-
 import asyncpg
 import logging
-import polars as pl  # Y A N G I: polars qo'shiladi
+import polars as pl # Y A N G I: polars qo'shiladi
 import asyncio
 from functools import wraps
 from config import DATABASE_URL
 import sheets_api
 from typing import List, Dict, Tuple, Optional
-from datetime import datetime, timedelta # timedelta qo'shildi (7 kunlik hisobot uchun)
+# datetime kutubxonalarini import qilish
+from datetime import datetime, timedelta, date # date qo'shildi
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -311,7 +310,7 @@ async def calculate_agent_stock(conn, agent_name: str) -> List[Dict]:
                 COALESCE(si.total_received, 0) - COALESCE(so.total_sold, 0) AS balance_qty
             FROM products p
             LEFT JOIN StockIn si ON p.name = si.product_name
-            LEFT JOIN SalesOut so ON p.name = so.product_name
+            LEFT JOIN SalesOut so ON p.name = so.product_JOIN product_name
             -- Agentga berilgan yoki sotilgan mahsulotlarni filtrlaymiz
             WHERE COALESCE(si.total_received, 0) > 0 OR COALESCE(so.total_sold, 0) > 0
             ORDER BY p.name ASC;
@@ -392,7 +391,8 @@ async def add_debt_payment(conn, agent_name: str, amount: float, comment: str, i
     # Agar bu Qoplash (Payment) bo'lsa, summa manfiy qilinadi (qarzdorlikni kamaytiradi)
     final_amount = -amount if is_payment else amount 
     txn_type = "Qoplash" if is_payment else "Avans"
-    txn_date = datetime.now().strftime("%Y-%m-%d")
+    # ❌ XATO TUZATILDI: SQL ga DATE tipida uzatish uchun .date() ishlatildi.
+    txn_date = datetime.now().date() 
     
     try:
         # 1. PostgreSQL ga yozish
@@ -402,7 +402,9 @@ async def add_debt_payment(conn, agent_name: str, amount: float, comment: str, i
         """, agent_name, txn_type, final_amount, txn_date, comment)
         
         # 2. Sheetsga yozish (ASOSIY SINKRONLASh)
-        await asyncio.to_thread(sheets_api.write_debt_txn_to_sheets, agent_name, txn_type, final_amount, txn_date, comment)
+        # Sheetsga matn formatida (str) yozish uchun formatlash kerak bo'lishi mumkin.
+        txn_date_str = txn_date.strftime("%Y-%m-%d")
+        await asyncio.to_thread(sheets_api.write_debt_txn_to_sheets, agent_name, txn_type, final_amount, txn_date_str, comment)
         
         return True
     except Exception as e:
@@ -415,9 +417,10 @@ async def add_sales_transaction(conn, agent_name: str, product_name: str, qty_kg
 
     total_amount = qty_kg * sale_price
     now = datetime.now()
-    sale_date = now.strftime("%Y-%m-%d")
-    sale_time = now.strftime("%H:%M:%S")
-
+    # ❌ XATO TUZATILDI: SQL ga DATE tipida uzatish uchun .date() ishlatildi.
+    sale_date = now.date()
+    sale_time = now.time() # TIME uchun
+    
     try:
         # 1. PostgreSQL ga yozish
         await conn.execute("""
@@ -426,7 +429,9 @@ async def add_sales_transaction(conn, agent_name: str, product_name: str, qty_kg
         """, agent_name, product_name, qty_kg, sale_price, total_amount, sale_date, sale_time)
         
         # 2. Sheetsga yozish (ASOSIY SINKRONLASh - Dinamik oylik varaqqa)
-        await asyncio.to_thread(sheets_api.write_sale_to_sheets, agent_name, product_name, qty_kg, sale_price, total_amount, sale_date, sale_time)
+        sale_date_str = sale_date.strftime("%Y-%m-%d")
+        sale_time_str = sale_time.strftime("%H:%M:%S")
+        await asyncio.to_thread(sheets_api.write_sale_to_sheets, agent_name, product_name, qty_kg, sale_price, total_amount, sale_date_str, sale_time_str)
 
         return True
     except Exception as e:
@@ -447,8 +452,8 @@ async def get_daily_sales_pivot_report(conn) -> Optional[str]:
     """
     try:
         # 1. Barcha sotuv va agent ma'lumotlarini olish
-        # [UZGARISH: 7 KUN O'RNIGA 31 KUNLIK MUDDAT BELGILANDI]
-        thirty_one_days_ago = (datetime.now() - timedelta(days=31)).strftime("%Y-%m-%d")
+        # ❌ XATO TUZATILDI: PostgreSQL ga uzatishdan oldin .date() ishlatildi.
+        thirty_one_days_ago = (datetime.now() - timedelta(days=31)).date()
         
         records = await conn.fetch("""
             SELECT
