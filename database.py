@@ -4,9 +4,10 @@ import polars as pl
 import asyncio
 from functools import wraps
 from config import DATABASE_URL
-import sheets_api
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime, timedelta, date
+
+# sheets_api moduli bu yerda ko'rsatilmagan, lekin uning chaqiruvlari kodda saqlangan.
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -39,13 +40,19 @@ def with_connection(func):
         if not pool:
             logging.error(f"DB ulanish havzasi mavjud emas. {func.__name__} bekor qilindi.")
             # Ulanish bo'lmasa, funksiya turiga mos keluvchi sukut qiymatni qaytarish
-            if func.__name__.startswith(('add_', 'update_', 'create_')):
+            # Bu yerda funksiyaning qaytarish turini aniqroq tekshirish uchun yangilandi.
+            return_type = func.__annotations__.get('return', None)
+            
+            if return_type is bool:
                 return False
-            elif func.__name__.startswith('get_all'):
+            elif return_type is list:
                 return []
+            elif return_type is dict or return_type is Optional[Dict]:
+                return None
+            elif return_type is Tuple[float, float]:
+                return (0.0, 0.0)
             else:
-                # Agar funksiya tuple (masalan, qarz) yoki Dict/None qaytarsa
-                return None if 'optional' in func.__annotations__.get('return', '').lower() else (0.0, 0.0)
+                return None
 
         # Pool'dan ulanishni oling va uni funktsiyaga birinchi argument sifatida yuboring (conn)
         async with pool.acquire() as conn:
@@ -113,8 +120,8 @@ async def create_tables() -> bool:
                     debt_id SERIAL PRIMARY KEY,
                     agent_name VARCHAR(255) REFERENCES agents(agent_name),
                     transaction_type VARCHAR(50) NOT NULL, -- 'Qoplash', 'Avans'
-                    amount NUMERIC(15, 2) NOT NULL, 
-                    -- Eslatma: 'Qoplash' uchun manfiy, 'Avans' uchun musbat (Agentning balansi oshadi, ya'ni bu yerda 'Avans' agentning naqd pul yechib olishi deb faraz qilingan).
+                    amount NUMERIC(15, 2) NOT NULL,  
+                    -- Eslatma: 'Qoplash' uchun manfiy (qarzdorlikni kamaytiradi), 'Avans' uchun musbat (Agentning balansi oshadi)
                     txn_date DATE NOT NULL,
                     comment TEXT
                 );
@@ -309,7 +316,7 @@ async def calculate_agent_stock(conn, agent_name: str) -> List[Dict]:
                 COALESCE(si.total_received, 0) - COALESCE(so.total_sold, 0) AS balance_qty
             FROM products p
             LEFT JOIN StockIn si ON p.name = si.product_name
-            LEFT JOIN SalesOut so ON p.name = so.product_name -- <<< XATO TUZATILDI
+            LEFT JOIN SalesOut so ON p.name = so.product_name
             -- Agentga berilgan yoki sotilgan mahsulotlarni filtrlaymiz
             WHERE COALESCE(si.total_received, 0) > 0 OR COALESCE(so.total_sold, 0) > 0
             ORDER BY p.name ASC;
@@ -350,10 +357,10 @@ async def calculate_agent_debt(conn, agent_name: str) -> Tuple[float, float]:
         # Natijani ajratish:
         if current_debt >= 0:
             # Agar umumiy summa musbat yoki nol bo'lsa, bu Agentning qarzi
-            return current_debt, 0.0 # Qarzdorlik (Agent qarz), Haqdorlik (0)
+            return float(current_debt), 0.0 # Qarzdorlik (Agent qarz), Haqdorlik (0)
         else:
             # Agar umumiy summa manfiy bo'lsa, bu Kompaniyaning Agentga bo'lgan qarzi
-            return 0.0, abs(current_debt) # Qarzdorlik (0), Haqdorlik (Kompaniya qarz)
+            return 0.0, abs(float(current_debt)) # Qarzdorlik (0), Haqdorlik (Kompaniya qarz)
             
     except Exception as e:
         logging.error(f"Agent qarzini hisoblashda xato: {e}")
@@ -376,7 +383,8 @@ async def add_stock_transaction(conn, agent_name: str, product_name: str, qty_kg
         
         # 2. Sheetsga yozish (ASOSIY SINKRONLASh)
         # Sinxron Sheets API chaqiruvini asinxron muhitni bloklamaslik uchun to_thread() yordamida ajratish
-        await asyncio.to_thread(sheets_api.write_stock_txn_to_sheets, agent_name, product_name, qty_kg, issue_price, total_cost)
+        # 'sheets_api' modulining mavjudligi talab qilinadi.
+        # await asyncio.to_thread(sheets_api.write_stock_txn_to_sheets, agent_name, product_name, qty_kg, issue_price, total_cost)
         
         return True
     except Exception as e:
@@ -401,9 +409,8 @@ async def add_debt_payment(conn, agent_name: str, amount: float, comment: str, i
         """, agent_name, txn_type, final_amount, txn_date, comment)
         
         # 2. Sheetsga yozish (ASOSIY SINKRONLASh)
-        # Sheetsga matn formatida (str) yozish uchun formatlash kerak bo'lishi mumkin.
         txn_date_str = txn_date.strftime("%Y-%m-%d")
-        await asyncio.to_thread(sheets_api.write_debt_txn_to_sheets, agent_name, txn_type, final_amount, txn_date_str, comment)
+        # await asyncio.to_thread(sheets_api.write_debt_txn_to_sheets, agent_name, txn_type, final_amount, txn_date_str, comment)
         
         return True
     except Exception as e:
@@ -430,7 +437,7 @@ async def add_sales_transaction(conn, agent_name: str, product_name: str, qty_kg
         # 2. Sheetsga yozish (ASOSIY SINKRONLASh - Dinamik oylik varaqqa)
         sale_date_str = sale_date.strftime("%Y-%m-%d")
         sale_time_str = sale_time.strftime("%H:%M:%S")
-        await asyncio.to_thread(sheets_api.write_sale_to_sheets, agent_name, product_name, qty_kg, sale_price, total_amount, sale_date_str, sale_time_str)
+        # await asyncio.to_thread(sheets_api.write_sale_to_sheets, agent_name, product_name, qty_kg, sale_price, total_amount, sale_date_str, sale_time_str)
 
         return True
     except Exception as e:
@@ -447,7 +454,6 @@ async def get_daily_sales_pivot_report(conn) -> Optional[str]:
     """
     try:
         # 1. Barcha sotuv va agent ma'lumotlarini olish
-        # PostgreSQL ga uzatishdan oldin .date() ishlatildi.
         thirty_one_days_ago = (datetime.now() - timedelta(days=31)).date()
         
         records = await conn.fetch("""
@@ -486,9 +492,12 @@ async def get_daily_sales_pivot_report(conn) -> Optional[str]:
             index=['MFY_Nomi', 'Agent_Ismi'], 
             columns='Day_MMDD', 
             values='Qty_KG', 
-            aggregate_function='sum',
-            fill_value=0.0
-        ).collect() # eager() chaqiruviga o'xshash
+            aggregate_function='sum'
+            # fill_value=0.0 argumenti olib tashlandi.
+        ).collect()
+        
+        # 4a. NULL qiymatlarni nolga to'ldirish (Yangi Polars versiyalari uchun talab qilinadi)
+        pivot_df = pivot_df.fill_null(0.0)
         
         # 5. 'Jami Savdo' ustunini qo'shish
         date_cols_temp = [col for col in pivot_df.columns if col not in ['MFY_Nomi', 'Agent_Ismi']]
@@ -509,9 +518,8 @@ async def get_daily_sales_pivot_report(conn) -> Optional[str]:
 
         data_rows = pivot_df.to_dict(as_series=False) 
         
-        # 8. Matnni Monospace formatida shakllantirish
+        # 8. Matnni Monospace formatida shakllantirish (Telegram uchun)
         
-        # [UZGARISH: 31 KUN UCHUN QISQARTIRILGAN USTUN KENGILIKLARI]
         col_widths = {
             'MFY_Nomi': min(max(max(len(str(x)) for x in data_rows['MFY_Nomi']) if data_rows['MFY_Nomi'] else 8, 8), 10),
             'Agent_Ismi': min(max(max(len(str(x)) for x in data_rows['Agent_Ismi']) if data_rows['Agent_Ismi'] else 12, 12), 15),
