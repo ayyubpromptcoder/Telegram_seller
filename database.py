@@ -40,15 +40,12 @@ def with_connection(func):
         if not pool:
             logging.error(f"DB ulanish havzasi mavjud emas. {func.__name__} bekor qilindi.")
             # Ulanish bo'lmasa, funksiya turiga mos keluvchi sukut qiymatni qaytarish
-            # Bu yerda funksiyaning qaytarish turini aniqroq tekshirish uchun yangilandi.
             return_type = func.__annotations__.get('return', None)
             
             if return_type is bool:
                 return False
-            elif return_type is list:
+            elif return_type is list or return_type is List[Dict]:
                 return []
-            elif return_type is dict or return_type is Optional[Dict]:
-                return None
             elif return_type is Tuple[float, float]:
                 return (0.0, 0.0)
             else:
@@ -488,15 +485,15 @@ async def get_daily_sales_pivot_report(conn) -> Optional[str]:
         )
         
         # 4. Pivot jadvalni yaratish (Polars Pivot usuli)
+        # Eager DataFrame ustida .pivot() chaqiriladi, shuning uchun .collect() ORIB TASHLANDI.
         pivot_df = df.pivot(
             index=['MFY_Nomi', 'Agent_Ismi'], 
             columns='Day_MMDD', 
             values='Qty_KG', 
             aggregate_function='sum'
-            # fill_value=0.0 argumenti olib tashlandi.
-        ).collect()
+        )
         
-        # 4a. NULL qiymatlarni nolga to'ldirish (Yangi Polars versiyalari uchun talab qilinadi)
+        # 4a. NULL qiymatlarni nolga to'ldirish (Agar pivotda yaratilgan bo'lsa)
         pivot_df = pivot_df.fill_null(0.0)
         
         # 5. 'Jami Savdo' ustunini qo'shish
@@ -520,6 +517,7 @@ async def get_daily_sales_pivot_report(conn) -> Optional[str]:
         
         # 8. Matnni Monospace formatida shakllantirish (Telegram uchun)
         
+        # [UZGARISH: 31 KUN UCHUN QISQARTIRILGAN USTUN KENGILIKLARI]
         col_widths = {
             'MFY_Nomi': min(max(max(len(str(x)) for x in data_rows['MFY_Nomi']) if data_rows['MFY_Nomi'] else 8, 8), 10),
             'Agent_Ismi': min(max(max(len(str(x)) for x in data_rows['Agent_Ismi']) if data_rows['Agent_Ismi'] else 12, 12), 15),
@@ -590,5 +588,6 @@ async def get_daily_sales_pivot_report(conn) -> Optional[str]:
         return final_report
         
     except Exception as e:
+        # Xatoni o'chirganimizdan so'ng, endi bu yerda boshqa xatolar ushlanadi.
         logging.error(f"Polars 31 kunlik Pivot hisobotini yaratishda xato: {e}")
         return f"⚠️ Hisobotni tayyorlashda ichki xato yuz berdi: {e}"
