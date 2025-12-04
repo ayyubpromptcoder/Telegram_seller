@@ -27,7 +27,7 @@ class SellState(StatesGroup):
     """Savdo kiritish uchun holatlar"""
     waiting_for_product = State()
     waiting_for_quantity = State()
-    waiting_for_price = State()
+    #waiting_for_price = State()
 
 class LoginState(StatesGroup):
     """Tizimga kirish holati"""
@@ -213,13 +213,14 @@ async def start_sell(message: Message, state: FSMContext):
     
     # Mahsulot tugmalarini yaratish
     product_buttons = [
+        # Narxni tugmaga qo'shdik, chunki bu endi yakuniy narx
         [InlineKeyboardButton(text=f"{p['name']} ({p.get('price', 0):,.0f} UZS)", callback_data=f"sel_{p['name']}")]
         for p in products
     ]
     product_buttons.append([kb.cancel_btn])
     
     await message.answer(
-        "Savdo qilgan **mahsulotni** tanlang:",
+        "Savdo qilgan **mahsulotni** tanlang:\n*(Bu mahsulotning standart narxida kiritiladi)*",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=product_buttons),
         parse_mode="Markdown"
     )
@@ -230,19 +231,30 @@ async def start_sell(message: Message, state: FSMContext):
 async def select_quantity(callback: CallbackQuery, state: FSMContext):
     product_name = callback.data.split('_')[1]
     
-    await state.update_data(product_name=product_name)
+    # Mahsulot narxini bazadan olish
+    product_info = await database.get_product_info(product_name)
+    if not product_info or product_info.get('price', 0) <= 0:
+         await callback.answer("❌ Tanlangan mahsulotning narxi bazada o'rnatilmagan.", show_alert=True)
+         # O'z holida qoldiramiz
+         return 
+
+    default_price = product_info['price']
+    
+    await state.update_data(product_name=product_name, sale_price=default_price)
     
     try:
         await callback.message.edit_text(
-            f"Mahsulot: **{product_name}**\n\n"
+            f"Mahsulot: **{product_name}**\n"
+            f"Sotuv Narxi: **{default_price:,.0f} UZS**\n\n"
             f"Sotilgan **miqdorni** ({DEFAULT_UNIT}) kiriting:",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[kb.cancel_btn]]),
             parse_mode="Markdown"
         )
     except TelegramBadRequest:
-        # Xabar tahrirlanmasa (masalan, oldingi xabar yangilangan bo'lsa), yangi xabar yuborish
         await callback.message.answer(
-            f"Mahsulot: **{product_name}**\n\nSotilgan **miqdorni** ({DEFAULT_UNIT}) kiriting:",
+            f"Mahsulot: **{product_name}**\n"
+            f"Sotuv Narxi: **{default_price:,.0f} UZS**\n\n"
+            f"Sotilgan **miqdorni** ({DEFAULT_UNIT}) kiriting:",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[kb.cancel_btn]]),
             parse_mode="Markdown"
         )
@@ -250,47 +262,20 @@ async def select_quantity(callback: CallbackQuery, state: FSMContext):
     await state.set_state(SellState.waiting_for_quantity)
     await callback.answer()
 
-# --- 5.2 Miqdor Kiritildi ---
+# --- 5.2 Miqdor Kiritildi (YANGI YAKUNIY FUNKSIYA) ---
 @seller_router.message(SellState.waiting_for_quantity)
-async def select_price(message: Message, state: FSMContext):
+async def finish_sell_with_default_price(message: Message, state: FSMContext):
+    """Miqdorni qabul qiladi va standart narx bilan savdoni yakunlaydi."""
     try:
-        # Nuqta va vergulni qabul qilish uchun .replace(',', '.') ishlatilgan, yaxshi!
         qty_kg = float(message.text.replace(',', '.').strip()) 
         if qty_kg <= 0: raise ValueError
     except ValueError:
         return await message.answer("Miqdor noto'g'ri kiritildi. Iltimos, **musbat raqam** kiriting (masalan: 10.5):")
         
     data = await state.get_data()
-    product_name = data['product_name']
-    
-    # Mahsulotning standart narxini olish
-    product_info = await database.get_product_info(product_name)
-    default_price = product_info.get('price', 0) if product_info else 0
-    
-    await state.update_data(qty_kg=qty_kg)
-    
-    await message.answer(
-        f"Mahsulot: **{product_name}** ({qty_kg:.1f} {DEFAULT_UNIT})\n\n"
-        f"Sotilgan **narxni** (1 {DEFAULT_UNIT} uchun, so'mda) kiriting.\n"
-        f"*(Standart narx: {default_price:,.0f} UZS)*",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[kb.cancel_btn]]),
-        parse_mode="Markdown"
-    )
-    await state.set_state(SellState.waiting_for_price)
-
-# --- 5.3 Narx Kiritildi (Yakuniy) ---
-@seller_router.message(SellState.waiting_for_price)
-async def finish_sell(message: Message, state: FSMContext):
-    try:
-        sale_price = float(message.text.replace(',', '.').strip())
-        if sale_price <= 0: raise ValueError
-    except ValueError:
-        return await message.answer("Narx noto'g'ri kiritildi. Iltimos, **musbat raqam** kiriting (masalan: 7500):")
-    
-    data = await state.get_data()
     agent_name = data['agent_name']
     product_name = data['product_name']
-    qty_kg = data['qty_kg']
+    sale_price = data['sale_price'] # Standart narx state'dan olinadi
     
     # Savdoni bazaga kiritish
     success = await database.add_sales_transaction(agent_name, product_name, qty_kg, sale_price)
@@ -303,7 +288,7 @@ async def finish_sell(message: Message, state: FSMContext):
             "✅ **Savdo muvaffaqiyatli kiritildi!**\n\n"
             f"Tovar: **{product_name}**\n"
             f"Miqdor: **{qty_kg:.1f} {DEFAULT_UNIT}**\n"
-            f"Narx: **{sale_price:,.0f} UZS**\n"
+            f"Narx: **{sale_price:,.0f} UZS** (Admin narxi)\n"
             f"Jami: **{total_amount:,.0f} UZS**",
             reply_markup=kb.seller_main_kb,
             parse_mode="Markdown"
